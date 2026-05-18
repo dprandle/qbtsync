@@ -33,6 +33,7 @@ export type qbt_timesheets_response = {
 export type qbt_object_type = "timesheet" | "user" | "jobcode";
 
 export type qbt_object_map = {
+    _id: string;
     qbt_id: number;
     our_id: string;
     type: qbt_object_type;
@@ -52,7 +53,6 @@ export type time_record = {
 };
 
 export type sync_state = {
-    _id: string;            // fixed key, e.g. "qbt_sync"
     full_import_complete: boolean;
     // Date of last timesheet last_modified seen — used as modified_since on next poll
     last_synced: Date | null;

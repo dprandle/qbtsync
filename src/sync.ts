@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto";
-import { load_sync_state, save_sync_state, time_records_col, qbt_object_map_col } from "./db";
+import { load_sync_state, save_sync_state } from "./sync_state";
+import { time_records_col, qbt_object_map_col } from "./db";
 import { fetch_timesheets } from "./qbt_client";
 import { qbt_timesheet, time_record } from "./types";
 
@@ -50,6 +51,7 @@ async function upsert_timesheet(ts: qbt_timesheet): Promise<void> {
         const rec = timesheet_to_time_record(ts);
         await time_records_col().insertOne(rec);
         await map_col.insertOne({
+            _id: randomUUID(),
             qbt_id: ts.id,
             our_id: rec._id,
             type: "timesheet",

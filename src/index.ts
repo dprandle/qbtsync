@@ -1,4 +1,5 @@
-import { connect, disconnect, load_sync_state } from "./db";
+import { connect, disconnect } from "./db";
+import { load_sync_state } from "./sync_state";
 import { full_import, incremental_sync } from "./sync";
 import { config } from "./config";
 
