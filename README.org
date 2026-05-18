@@ -1,0 +1,121 @@
+* qbtsync
+
+A Node/TypeScript service that syncs QuickBooks Time (QBT) timesheets into our own =time_records= collection in MongoDB. The desktop app and payroll system treat =time_records= as the canonical source of time data; this service keeps them populated from QBT and pushes edits back when needed.
+
+** How it works
+
+*** Full import
+
+On first run (or with =--full-import=), the service pulls all QBT timesheets with no date filter and upserts each one as a =time_record=. Progress is saved per page so a crash can resume from the last completed page rather than starting over.
+
+*** Incremental sync
+
+After the full import completes, the service enters a polling loop. Each iteration fetches only timesheets modified since the last successful sync using QBT's =modified_since= filter. The cursor is only advanced after all records in a batch are written, so a crash never skips records — at worst it reprocesses the last batch, which is safe because all writes are idempotent.
+
+*** Edit push-back
+
+When a manager edits a =time_record= in the desktop app, if a =qbt_object_map= entry exists for that record the desktop pushes the change directly to QBT using the =qbt_id=. The sync service will see that change come back on the next poll but will skip it because the incoming =qbt_modified= will match what is already stored in the mapping.
+
+** Collections
+
+*** =time_records=
+
+Canonical time data. Records created from QBT timesheets have =hrid= and =cont_id= filled in once the corresponding =qbt_object_map= entries for the QBT user and jobcode exist. Records created directly in the desktop have no mapping entry.
+
+*** =qbt_object_map=
+
+Maps QBT entity IDs to our internal IDs. A single collection covers all entity types.
+
+| Field          | Description                                      |
+|----------------+--------------------------------------------------|
+| =qbt_id=       | QBT integer ID for the entity                    |
+| =our_id=       | Our internal string ID for the mapped entity     |
+| =type=         | =timesheet=, =user=, or =jobcode=                |
+| =qbt_modified= | =last_modified= from QBT at time of last sync    |
+
+Unique compound index on ={ type, qbt_id }=.
+
+The =user= and =jobcode= entries are managed separately (see [[*User and jobcode mapping]]). The =timesheet= entries are created and maintained automatically by this service.
+
+*** =sync_state=
+
+Single document (=_id: "qbt_sync"=) that persists the sync cursor and full import progress.
+
+| Field                  | Description                                          |
+|------------------------+------------------------------------------------------|
+| =full_import_complete= | Whether the one-time full import has finished        |
+| =last_synced=          | Cursor — =modified_since= value for the next poll   |
+| =full_import_page=     | Last completed page during full import (for resume)  |
+
+** User and jobcode mapping
+
+Before =hrid= and =cont_id= can be filled on imported =time_records=, =qbt_object_map= entries of type =user= and =jobcode= must exist. These are not created automatically.
+
+- *Users* can typically be auto-matched by email between the QBT user and the =hresource= record.
+- *Jobcodes* require a one-time manual mapping since names may not match exactly between the two systems.
+
+Once these mappings are in place a backfill pass can populate =hrid= and =cont_id= on any =time_records= that were imported before the mappings existed.
+
+** Setup
+
+*** Prerequisites
+
+- Node 18+
+- A MongoDB Atlas cluster (debug and prod)
+- A QBT access token
+
+*** Install
+
+#+begin_src sh
+npm install
+#+end_src
+
+*** Configure
+
+Copy =.env= and fill in the placeholders:
+
+#+begin_src sh
+cp .env .env.local
+#+end_src
+
+#+begin_src conf
+MONGODB_URI=your_mongodb_atlas_connection_string_here
+MONGODB_DB_NAME=your_database_name_here
+QBT_ACCESS_TOKEN=your_quickbooks_time_access_token_here
+SYNC_INTERVAL_MS=60000
+#+end_src
+
+** Usage
+
+*** Development
+
+#+begin_src sh
+npm run dev
+#+end_src
+
+*** Production
+
+#+begin_src sh
+npm run build
+npm start
+#+end_src
+
+*** Force full import
+
+Runs the full historical import even if one has already completed. Use this when pointing at a fresh database (e.g. restoring prod data to debug).
+
+#+begin_src sh
+npm run migrate
+# or after building:
+node dist/index.js --full-import
+#+end_src
+
+** Migration order
+
+When migrating TDRs from TSheets-typed data to =time_record= references:
+
+1. Restore prod data to debug DB
+2. Run =--full-import= against debug DB — creates =time_records= for all historical QBT timesheets
+3. Run TDR migration script — for each =src_tsheets= entry, look up the =qbt_object_map= entry by =qbt_id=, get =our_id=, replace the reference; abort if any lookup fails
+4. Verify results on debug
+5. Repeat steps 2–3 on prod
