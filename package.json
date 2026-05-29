@@ -5,9 +5,11 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
+    "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec ts-node src/index.ts",
     "start": "node dist/index.js",
-    "migrate": "ts-node src/index.ts --full-import"
+    "migrate": "ts-node src/index.ts --full-import",
+    "reset": "ts-node src/index.ts --reset",
+    "wipe": "ts-node src/index.ts --reset"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

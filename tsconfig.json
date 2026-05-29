@@ -11,6 +11,6 @@
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*"],
+  "include": ["src/**/*", "../../.emacs.d/backup/!home!dprandle!projects!qbtsync!src!sync_assignments.ts~"],
   "exclude": ["node_modules", "dist"]
 }

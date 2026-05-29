@@ -1,60 +1,93 @@
 * qbtsync
 
-A Node/TypeScript service that syncs QuickBooks Time (QBT) timesheets into our own =time_records= collection in MongoDB. The desktop app and payroll system treat =time_records= as the canonical source of time data; this service keeps them populated from QBT and pushes edits back when needed.
+A Node/TypeScript service that keeps QuickBooks Time (QBT) in sync with the UberMail MongoDB database. It is the sole authority for all QBT writes — the UberMail desktop app makes no direct QBT API calls.
+
+Four entity types are synced, each on its own independent polling loop:
+
+| Loop              | Direction          | Interval env var                  |
+|-------------------+--------------------+-----------------------------------|
+| Users             | MongoDB ↔ QBT      | =USER_SYNC_INTERVAL_MS=           |
+| Jobcodes          | MongoDB ↔ QBT      | =JOBCODE_SYNC_INTERVAL_MS=        |
+| Jobcode assignments | MongoDB ↔ QBT    | =ASSIGNMENT_SYNC_INTERVAL_MS=     |
+| Timesheets        | QBT ↔ MongoDB      | =TIMESHEET_SYNC_INTERVAL_MS=      |
 
 ** How it works
 
-*** Full import
+*** Users
 
-On first run (or with =--full-import=), the service pulls all QBT timesheets with no date filter and upserts each one as a =time_record=. Progress is saved per page so a crash can resume from the last completed page rather than starting over.
+An =hresource= should have an active QBT user when its =tt_flags= field has the =TIME_TRACKING_APP= bit (bit 0) set and the record is not archived. On first run a bootstrap pass matches existing QBT users to hresources by email and creates =qbt_object_map= entries. After that, delta syncs poll for hresources modified since the last cursor and create, reactivate, or archive QBT users as needed.
 
-*** Incremental sync
+*** Jobcodes
 
-After the full import completes, the service enters a polling loop. Each iteration fetches only timesheets modified since the last successful sync using QBT's =modified_since= filter. The cursor is only advanced after all records in a batch are written, so a crash never skips records — at worst it reprocesses the last batch, which is safe because all writes are idempotent.
+A =contract_route= should have an active QBT jobcode when it is active (not archived) and awarded (no bid-role entry in its =assignments= map). On first run a bootstrap pass matches existing QBT jobcodes to contracts by route-name substring and creates mappings. New jobcodes are named after =route_num=. Contracts that become inactive or move back to bid status have their QBT jobcode archived.
 
-*** Edit push-back
+*** Jobcode assignments
 
-When a manager edits a =time_record= in the desktop app, if a =qbt_object_map= entry exists for that record the desktop pushes the change directly to QBT using the =qbt_id=. The sync service will see that change come back on the next poll but will skip it because the incoming =qbt_modified= will match what is already stored in the mapping.
+A QBT jobcode assignment ties a user to a jobcode. The desired set is all =(qbt_user_id, qbt_jobcode_id)= pairs where the hresource has =TIME_TRACKING_APP= set, the contract is active and awarded, and the hresource is linked to the contract under an Employee-tagged role. Each run fetches the full current set from QBT and diffs it against the desired set, adding and removing assignments as needed.
+
+*** Timesheets
+
+**** Inbound (QBT → MongoDB)
+
+On first run (or with =--full-import=), all QBT timesheets are imported and stored as =time_records=. Progress is saved per page so a crash can resume. After the initial import, incremental polling fetches only timesheets modified since the last cursor.
+
+Once a timesheet is in our system, =time_records= is authoritative. If a QBT admin edits a timesheet, the service detects the discrepancy on the next inbound poll and pushes the =time_record= values back to QBT to revert the change.
+
+**** Outbound (MongoDB → QBT)
+
+A separate outbound loop polls =time_records= for records modified since its own cursor.
+
+- If the record has a =qbt_object_map= entry and was modified after the service last touched it, the change is pushed to QBT.
+- If the record has no mapping (created directly in UberMail), the service creates a new QBT timesheet once the corresponding user and jobcode mappings exist, then stores the new mapping.
 
 ** Collections
 
 *** =time_records=
 
-Canonical time data. Records created from QBT timesheets have =hrid= and =cont_id= filled in once the corresponding =qbt_object_map= entries for the QBT user and jobcode exist. Records created directly in the desktop have no mapping entry.
+Canonical time data. =hrid= and =cont_id= are filled once the corresponding =qbt_object_map= user and jobcode entries exist. Records created directly in UberMail are pushed to QBT by the outbound timesheet loop.
 
 *** =qbt_object_map=
 
-Maps QBT entity IDs to our internal IDs. A single collection covers all entity types.
+Maps QBT integer IDs to our internal string IDs. A single collection covers all entity types.
 
-| Field          | Description                                      |
-|----------------+--------------------------------------------------|
-| =qbt_id=       | QBT integer ID for the entity                    |
-| =our_id=       | Our internal string ID for the mapped entity     |
-| =type=         | =timesheet=, =user=, or =jobcode=                |
-| =qbt_modified= | =last_modified= from QBT at time of last sync    |
+| Field            | Description                                                           |
+|------------------+-----------------------------------------------------------------------|
+| =qbt_id=         | QBT integer ID for the entity                                         |
+| =our_id=         | Our internal string ID for the mapped entity                          |
+| =type=           | =timesheet=, =user=, or =jobcode=                                     |
+| =qbt_modified=   | =last_modified= from QBT at time of last sync                         |
+| =our_updated_at= | Timestamp of the last time this service wrote the associated record   |
 
-Unique compound index on ={ type, qbt_id }=.
+Unique compound indexes on ={ type, qbt_id }= and ={ type, our_id }=.
 
-The =user= and =jobcode= entries are managed separately (see [[*User and jobcode mapping]]). The =timesheet= entries are created and maintained automatically by this service.
+All entries are created and maintained automatically by this service.
 
-*** =sync_state=
+*** =sync_state.json=
 
-Single document (=_id: "qbt_sync"=) that persists the sync cursor and full import progress.
+File on disk (not in MongoDB) that persists cursors and bootstrap flags across restarts.
 
-| Field                  | Description                                          |
-|------------------------+------------------------------------------------------|
-| =full_import_complete= | Whether the one-time full import has finished        |
-| =last_synced=          | Cursor — =modified_since= value for the next poll   |
-| =full_import_page=     | Last completed page during full import (for resume)  |
+#+begin_src json
+{
+  "timesheets": {
+    "full_import_complete": true,
+    "last_synced": "2025-01-01T00:00:00.000Z",
+    "full_import_page": 1,
+    "outbound_last_synced": "2025-01-01T00:00:00.000Z"
+  },
+  "users": {
+    "bootstrap_complete": true,
+    "last_synced": "2025-01-01T00:00:00.000Z"
+  },
+  "jobcodes": {
+    "bootstrap_complete": true,
+    "last_synced": "2025-01-01T00:00:00.000Z"
+  }
+}
+#+end_src
 
-** User and jobcode mapping
+*** Mock QBT database (dev mode only)
 
-Before =hrid= and =cont_id= can be filled on imported =time_records=, =qbt_object_map= entries of type =user= and =jobcode= must exist. These are not created automatically.
-
-- *Users* can typically be auto-matched by email between the QBT user and the =hresource= record.
-- *Jobcodes* require a one-time manual mapping since names may not match exactly between the two systems.
-
-Once these mappings are in place a backfill pass can populate =hrid= and =cont_id= on any =time_records= that were imported before the mappings existed.
+When =QBT_ENV=dev=, all QBT reads and writes go to a separate MongoDB database (=MOCK_QBT_DB_NAME=, default =mock_qbt=) instead of the real QBT API. The mock is seeded from live QBT data on every startup. Collections mirror the QBT entity names: =users=, =jobcodes=, =jobcode_assignments=, =timesheets=.
 
 ** Setup
 
@@ -62,7 +95,7 @@ Once these mappings are in place a backfill pass can populate =hrid= and =cont_i
 
 - Node 18+
 - A MongoDB Atlas cluster (debug and prod)
-- A QBT access token
+- A QBT access token (token string only — the service prepends =Bearer= automatically)
 
 *** Install
 
@@ -72,22 +105,27 @@ npm install
 
 *** Configure
 
-Copy =.env= and fill in the placeholders:
-
 #+begin_src sh
-cp .env .env.local
+cp .env.example .env
 #+end_src
 
-#+begin_src conf
-MONGODB_URI=your_mongodb_atlas_connection_string_here
-MONGODB_DB_NAME=your_database_name_here
-QBT_ACCESS_TOKEN=your_quickbooks_time_access_token_here
-SYNC_INTERVAL_MS=60000
-#+end_src
+| Variable                    | Required | Default    | Description                                              |
+|-----------------------------+----------+------------+----------------------------------------------------------|
+| =MONGODB_URI=               | Yes      | —          | MongoDB connection string                                |
+| =MONGODB_DB_NAME=           | Yes      | —          | Main database name                                       |
+| =QBT_ACCESS_TOKEN=          | Yes      | —          | QBT bearer token (no =Bearer= prefix)                    |
+| =QBT_ENV=                   | No       | =prod=     | Set to =dev= to use mock QBT                             |
+| =MOCK_QBT_DB_NAME=          | No       | =mock_qbt= | Database for mock QBT collections (dev mode only)        |
+| =TIMESHEET_SYNC_INTERVAL_MS= | No      | =60000=    | Inbound + outbound timesheet poll interval               |
+| =USER_SYNC_INTERVAL_MS=     | No       | =60000=    | User delta sync interval                                 |
+| =JOBCODE_SYNC_INTERVAL_MS=  | No       | =60000=    | Jobcode delta sync interval                              |
+| =ASSIGNMENT_SYNC_INTERVAL_MS= | No     | =300000=   | Jobcode assignment reconciliation interval               |
 
 ** Usage
 
 *** Development
+
+Starts with =QBT_ENV=dev= automatically. On startup the mock QBT database is wiped and re-seeded from live QBT data, then all sync loops run against the mock.
 
 #+begin_src sh
 npm run dev
@@ -100,9 +138,9 @@ npm run build
 npm start
 #+end_src
 
-*** Force full import
+*** Force full timesheet import
 
-Runs the full historical import even if one has already completed. Use this when pointing at a fresh database (e.g. restoring prod data to debug).
+Runs the full historical timesheet import even if one has already completed. Use this when pointing at a fresh database.
 
 #+begin_src sh
 npm run migrate
@@ -110,12 +148,30 @@ npm run migrate
 node dist/index.js --full-import
 #+end_src
 
+** Restart and reset procedures
+
+*** Safe restart
+
+Delete =sync_state.json= and restart. All sync loops re-bootstrap from scratch — the full timesheet import replays, user/jobcode bootstraps re-run — but all writes are idempotent so no data is duplicated or lost.
+
+#+begin_src sh
+npm run reset
+# then restart normally
+#+end_src
+
+*** Full wipe (start from empty database)
+
+Use this when restoring a database that had no prior QBT data.
+
+1. Drop the =qbt_object_map= collection
+2. Drop =time_records= (or just the QBT-sourced ones)
+3. Delete =sync_state.json=
+4. Run with =--full-import=
+
 ** Migration order
 
-When migrating TDRs from TSheets-typed data to =time_record= references:
+When deploying against an existing database for the first time:
 
-1. Restore prod data to debug DB
-2. Run =--full-import= against debug DB — creates =time_records= for all historical QBT timesheets
-3. Run TDR migration script — for each =src_tsheets= entry, look up the =qbt_object_map= entry by =qbt_id=, get =our_id=, replace the reference; abort if any lookup fails
-4. Verify results on debug
-5. Repeat steps 2–3 on prod
+1. Start the service — user and jobcode bootstrap passes run automatically, matching existing QBT entities to UberMail records by email and route name respectively
+2. Once bootstrap is complete the delta sync loops take over
+3. Remove the direct QBT write code from the UberMail desktop app

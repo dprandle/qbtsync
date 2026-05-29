@@ -7,9 +7,18 @@ function required(key: string): string {
     return val;
 }
 
+function optional_int(key: string, default_val: number): number {
+    return parseInt(process.env[key] ?? String(default_val), 10);
+}
+
 export const config = {
     mongo_uri: required("MONGODB_URI"),
     mongo_db_name: required("MONGODB_DB_NAME"),
+    mock_qbt_db_name: process.env["MOCK_QBT_DB_NAME"] ?? "mock_qbt",
     qbt_access_token: required("QBT_ACCESS_TOKEN"),
-    sync_interval_ms: parseInt(process.env["SYNC_INTERVAL_MS"] ?? "60000", 10),
+    qbt_env: (process.env["QBT_ENV"] ?? "prod") as "dev" | "prod",
+    timesheet_sync_interval_ms: optional_int("TIMESHEET_SYNC_INTERVAL_MS", 60_000),
+    user_sync_interval_ms: optional_int("USER_SYNC_INTERVAL_MS", 60_000),
+    jobcode_sync_interval_ms: optional_int("JOBCODE_SYNC_INTERVAL_MS", 60_000),
+    assignment_sync_interval_ms: optional_int("ASSIGNMENT_SYNC_INTERVAL_MS", 300_000),
 };
