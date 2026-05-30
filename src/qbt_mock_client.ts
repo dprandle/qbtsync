@@ -6,7 +6,7 @@ import {
     qbt_jobcode_assignment,
 } from "./types";
 import {
-    QbtClient,
+    qbt_client,
     fetch_timesheets_opts,
     fetch_timesheets_result,
     fetch_users_opts,
@@ -18,10 +18,10 @@ import {
     timesheet_write_data,
 } from "./qbt_client_interface";
 import {
-    mock_qbt_users_col,
-    mock_qbt_jobcodes_col,
-    mock_qbt_assignments_col,
-    mock_qbt_timesheets_col,
+    get_mock_users_collection,
+    get_mock_jobcodes_collection,
+    get_mock_assignments_collection,
+    get_mock_timesheets_collection,
 } from "./db";
 
 const PAGE_SIZE = 100;
@@ -35,9 +35,9 @@ function now_iso(): string {
     return new Date().toISOString();
 }
 
-export class QbtMockClient implements QbtClient {
+export class qbt_mock_client implements qbt_client {
     async fetch_timesheets(opts: fetch_timesheets_opts): Promise<fetch_timesheets_result> {
-        const col = mock_qbt_timesheets_col();
+        const col = get_mock_timesheets_collection();
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) {
@@ -69,17 +69,17 @@ export class QbtMockClient implements QbtClient {
             tz: "America/New_York",
             customfields: {},
         };
-        await mock_qbt_timesheets_col().insertOne(ts as any);
+        await get_mock_timesheets_collection().insertOne(ts as any);
         return ts;
     }
 
     async update_timesheet(id: number, d: Partial<timesheet_write_data>): Promise<qbt_timesheet> {
         const last_modified = now_iso();
-        await mock_qbt_timesheets_col().updateOne(
+        await get_mock_timesheets_collection().updateOne(
             { id } as any,
             { $set: { ...d, last_modified } as any }
         );
-        const updated = await mock_qbt_timesheets_col().findOne({ id } as any);
+        const updated = await get_mock_timesheets_collection().findOne({ id } as any);
         return updated as unknown as qbt_timesheet;
     }
 
@@ -89,7 +89,7 @@ export class QbtMockClient implements QbtClient {
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         }
-        const docs = await mock_qbt_users_col()
+        const docs = await get_mock_users_collection()
             .find(filter)
             .skip((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE + 1)
@@ -109,12 +109,12 @@ export class QbtMockClient implements QbtClient {
             employee_role: "employee",
             last_modified: now_iso(),
         };
-        await mock_qbt_users_col().insertOne(user as any);
+        await get_mock_users_collection().insertOne(user as any);
         return user;
     }
 
     async set_user_active(id: number, active: boolean): Promise<void> {
-        await mock_qbt_users_col().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
+        await get_mock_users_collection().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
     }
 
     async fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result> {
@@ -123,7 +123,7 @@ export class QbtMockClient implements QbtClient {
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         }
-        const docs = await mock_qbt_jobcodes_col()
+        const docs = await get_mock_jobcodes_collection()
             .find(filter)
             .skip((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE + 1)
@@ -140,17 +140,17 @@ export class QbtMockClient implements QbtClient {
             active: true,
             last_modified: now_iso(),
         };
-        await mock_qbt_jobcodes_col().insertOne(jc as any);
+        await get_mock_jobcodes_collection().insertOne(jc as any);
         return jc;
     }
 
     async set_jobcode_active(id: number, active: boolean): Promise<void> {
-        await mock_qbt_jobcodes_col().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
+        await get_mock_jobcodes_collection().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
     }
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
         const page = opts.page ?? 1;
-        const docs = await mock_qbt_assignments_col()
+        const docs = await get_mock_assignments_collection()
             .find({})
             .skip((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE + 1)
@@ -167,11 +167,11 @@ export class QbtMockClient implements QbtClient {
             active: true,
             last_modified: now_iso(),
         };
-        await mock_qbt_assignments_col().insertOne(asgn as any);
+        await get_mock_assignments_collection().insertOne(asgn as any);
         return asgn;
     }
 
     async delete_jobcode_assignment(id: number): Promise<void> {
-        await mock_qbt_assignments_col().deleteOne({ id } as any);
+        await get_mock_assignments_collection().deleteOne({ id } as any);
     }
 }

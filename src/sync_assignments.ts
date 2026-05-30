@@ -1,6 +1,6 @@
-import { contracts_col, hresources_col, qbt_object_map_col } from "./db";
+import { get_cont_collection, get_hres_collection, get_qbt_map_collection } from "./db";
 import { contract_route_doc } from "./types";
-import { QbtClient } from "./qbt_client_interface";
+import { qbt_client } from "./qbt_client_interface";
 
 const INVALID_DATETIME = new Date("0001-01-01T00:00:00.000Z");
 
@@ -35,10 +35,10 @@ function pair(user_id: number, jobcode_id: number): pair_key {
     return `${user_id}:${jobcode_id}`;
 }
 
-export async function sync_assignments(qbt: QbtClient): Promise<void> {
+export async function sync_assignments(qbt: qbt_client): Promise<void> {
     console.log("[assignments] Reconciling jobcode assignments...");
 
-    const map_col = qbt_object_map_col();
+    const map_col = get_qbt_map_collection();
 
     // Build lookup maps from our IDs to QBT IDs
     const user_mappings = await map_col.find({ type: "user" }).toArray();
@@ -52,7 +52,7 @@ export async function sync_assignments(qbt: QbtClient): Promise<void> {
     const desired = new Map<pair_key, { user_id: number; jobcode_id: number }>();
 
     // Only examine active+awarded contracts that have a QBT jobcode mapping
-    const contracts = await contracts_col()
+    const contracts = await get_cont_collection()
         .find({ _id: { $in: Array.from(jobcode_contract_ids) } })
         .toArray();
 
@@ -78,7 +78,7 @@ export async function sync_assignments(qbt: QbtClient): Promise<void> {
             if (!qbt_user_id) continue;
 
             // Check TIME_TRACKING_APP flag
-            const hres = await hresources_col().findOne({ _id: hres_id }, { projection: { tt_flags: 1 } });
+            const hres = await get_hres_collection().findOne({ _id: hres_id }, { projection: { tt_flags: 1 } });
             if (!hres || (hres.tt_flags & TIME_TRACKING_APP) === 0) continue;
 
             desired.set(pair(qbt_user_id, qbt_jobcode_id), { user_id: qbt_user_id, jobcode_id: qbt_jobcode_id });

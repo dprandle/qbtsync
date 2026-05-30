@@ -10,7 +10,7 @@ import {
     qbt_jobcode_assignments_response,
 } from "./types";
 import {
-    QbtClient,
+    qbt_client,
     fetch_timesheets_opts,
     fetch_timesheets_result,
     fetch_users_opts,
@@ -23,6 +23,7 @@ import {
 } from "./qbt_client_interface";
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
+const TIMESHEET_BASE_START_DATE = "2024-01-01";
 
 async function qbt_get(path: string, params: Record<string, string>): Promise<unknown> {
     const url = new URL(`${BASE_URL}${path}`);
@@ -92,7 +93,7 @@ async function qbt_delete(path: string, params: Record<string, string>): Promise
     }
 }
 
-export class QbtApiClient implements QbtClient {
+export class QbtApiClient implements qbt_client {
     async fetch_timesheets(opts: fetch_timesheets_opts): Promise<fetch_timesheets_result> {
         const params: Record<string, string> = {
             limit: "100",
@@ -101,7 +102,7 @@ export class QbtApiClient implements QbtClient {
         if (opts.modified_since) {
             params["modified_since"] = opts.modified_since.toISOString();
         } else {
-            params["start_date"] = "2000-01-01";
+            params["start_date"] = "2024-01-01";
         }
         const data = (await qbt_get("/timesheets", params)) as qbt_timesheets_response;
         return { timesheets: Object.values(data.results.timesheets), more: data.more };

@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { save_timesheet_state, load_sync_state } from "./sync_state";
-import { time_records_col, qbt_object_map_col } from "./db";
+import { get_trec_collection } from "./db";
+import { get_qbt_map_collection } from "./get_qbt_map_collection";
 import { qbt_timesheet, time_record } from "./types";
-import { QbtClient } from "./qbt_client_interface";
+import { qbt_client } from "./qbt_client_interface";
 
 function timesheet_to_time_record(ts: qbt_timesheet): time_record {
     const now = new Date();
@@ -24,8 +25,8 @@ function dates_approx_equal(a: Date, b: string): boolean {
     return Math.abs(a.getTime() - new Date(b).getTime()) < 1000;
 }
 
-async function upsert_timesheet(ts: qbt_timesheet, qbt: QbtClient): Promise<void> {
-    const map_col = qbt_object_map_col();
+async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<void> {
+    const map_col = get_qbt_map_collection();
     const incoming_modified = new Date(ts.last_modified);
 
     const mapping = await map_col.findOne({ type: "timesheet", qbt_id: ts.id });
@@ -35,7 +36,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: QbtClient): Promise<void
             return; // already up to date
         }
 
-        const rec = await time_records_col().findOne({ _id: mapping.our_id });
+        const rec = await get_trec_collection().findOne({ _id: mapping.our_id });
         if (!rec) {
             // Mapping exists but record is gone — just update qbt_modified
             await map_col.updateOne(
@@ -73,7 +74,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: QbtClient): Promise<void
     } else {
         // New timesheet from QBT — create a time_record and mapping
         const rec = timesheet_to_time_record(ts);
-        await time_records_col().insertOne(rec);
+        await get_trec_collection().insertOne(rec);
         await map_col.insertOne({
             _id: randomUUID(),
             qbt_id: ts.id,
@@ -85,7 +86,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: QbtClient): Promise<void
     }
 }
 
-async function process_inbound_page(timesheets: qbt_timesheet[], latest_modified: Date, qbt: QbtClient): Promise<Date> {
+async function process_inbound_page(timesheets: qbt_timesheet[], latest_modified: Date, qbt: qbt_client): Promise<Date> {
     for (const ts of timesheets) {
         await upsert_timesheet(ts, qbt);
         const mod = new Date(ts.last_modified);
@@ -94,7 +95,8 @@ async function process_inbound_page(timesheets: qbt_timesheet[], latest_modified
     return latest_modified;
 }
 
-export async function full_import(qbt: QbtClient): Promise<void> {
+
+export async function full_import(qbt: qbt_client): Promise<void> {
     console.log("[timesheets] Starting full import...");
     const state = load_sync_state();
     let page = state.timesheets.full_import_page;
@@ -108,17 +110,17 @@ export async function full_import(qbt: QbtClient): Promise<void> {
 
         latest_modified = await process_inbound_page(timesheets, latest_modified, qbt);
 
-        await save_timesheet_state({ full_import_page: page, last_synced: latest_modified });
+        save_timesheet_state({ full_import_page: page, last_synced: latest_modified });
 
         if (!more) break;
         page++;
     }
 
-    await save_timesheet_state({ full_import_complete: true, full_import_page: 1 });
+    save_timesheet_state({ full_import_complete: true, full_import_page: 1 });
     console.log("[timesheets] Full import complete.");
 }
 
-export async function incremental_sync(qbt: QbtClient): Promise<void> {
+export async function incremental_sync(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     const modified_since = state.timesheets.last_synced ?? new Date(0);
 
@@ -146,11 +148,11 @@ export async function incremental_sync(qbt: QbtClient): Promise<void> {
     }
 }
 
-export async function outbound_sync(qbt: QbtClient): Promise<void> {
+export async function outbound_sync(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     const since = state.timesheets.outbound_last_synced ?? new Date(0);
 
-    const candidates = await time_records_col()
+    const candidates = await get_trec_collection()
         .find({ updated_at: { $gt: since } })
         .toArray();
 
@@ -158,7 +160,7 @@ export async function outbound_sync(qbt: QbtClient): Promise<void> {
 
     console.log(`[timesheets] Outbound sync: ${candidates.length} candidate(s)`);
 
-    const map_col = qbt_object_map_col();
+    const map_col = get_qbt_map_collection();
     let latest_updated = since;
 
     for (const rec of candidates) {

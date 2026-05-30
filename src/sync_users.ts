@@ -1,7 +1,8 @@
 import { randomUUID } from "crypto";
 import { save_user_state, load_sync_state } from "./sync_state";
-import { hresources_col, qbt_object_map_col } from "./db";
-import { QbtClient } from "./qbt_client_interface";
+import { get_hres_collection } from "./db";
+import { get_qbt_map_collection } from "./get_qbt_map_collection";
+import { qbt_client } from "./qbt_client_interface";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
@@ -15,9 +16,9 @@ function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
     return is_active && tracking_enabled;
 }
 
-async function bootstrap_users(qbt: QbtClient): Promise<void> {
+async function bootstrap_users(qbt: qbt_client): Promise<void> {
     console.log("[users] Running bootstrap: matching QBT users to hresources by email...");
-    const map_col = qbt_object_map_col();
+    const map_col = get_qbt_map_collection();
 
     let page = 1;
     while (true) {
@@ -28,7 +29,7 @@ async function bootstrap_users(qbt: QbtClient): Promise<void> {
             const existing = await map_col.findOne({ type: "user", qbt_id: qbt_user.id });
             if (existing) continue;
 
-            const hres = await hresources_col().findOne(
+            const hres = await get_hres_collection().findOne(
                 { email: { $regex: new RegExp(`^${qbt_user.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } }
             );
             if (!hres) continue;
@@ -54,15 +55,15 @@ async function bootstrap_users(qbt: QbtClient): Promise<void> {
     console.log("[users] Bootstrap complete.");
 }
 
-async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, qbt: QbtClient): Promise<void> {
-    const map_col = qbt_object_map_col();
+async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, qbt: qbt_client): Promise<void> {
+    const map_col = get_qbt_map_collection();
     const want = should_have_qbt_user(tt_flags, archived_on);
     const mapping = await map_col.findOne({ type: "user", our_id: hres_id });
 
     if (want) {
         if (!mapping) {
             // Create a new QBT user for this hresource
-            const hres = await hresources_col().findOne({ _id: hres_id });
+            const hres = await get_hres_collection().findOne({ _id: hres_id });
             if (!hres) return;
             const created = await qbt.create_user({
                 username: hres.email,
@@ -97,7 +98,7 @@ async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, q
     }
 }
 
-export async function sync_users(qbt: QbtClient): Promise<void> {
+export async function sync_users(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
 
     if (!state.users.bootstrap_complete) {
@@ -108,7 +109,7 @@ export async function sync_users(qbt: QbtClient): Promise<void> {
     console.log(`[users] Delta sync since ${since.toISOString()}`);
 
     // Query hresources modified since the cursor
-    const changed = await hresources_col()
+    const changed = await get_hres_collection()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 

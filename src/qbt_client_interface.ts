@@ -49,7 +49,7 @@ export type timesheet_write_data = {
     notes: string;
 };
 
-export interface QbtClient {
+export interface qbt_client {
     // Timesheets
     fetch_timesheets(opts: fetch_timesheets_opts): Promise<fetch_timesheets_result>;
     create_timesheet(data: timesheet_write_data): Promise<qbt_timesheet>;

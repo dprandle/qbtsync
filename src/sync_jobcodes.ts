@@ -1,8 +1,9 @@
 import { randomUUID } from "crypto";
 import { save_jobcode_state, load_sync_state } from "./sync_state";
-import { contracts_col, qbt_object_map_col } from "./db";
+import { get_cont_collection } from "./db";
+import { get_qbt_map_collection } from "./get_qbt_map_collection";
 import { contract_route_doc } from "./types";
-import { QbtClient } from "./qbt_client_interface";
+import { qbt_client } from "./qbt_client_interface";
 
 // INVALID_DATETIME sentinel stored by UberMail for un-archived documents
 const INVALID_DATETIME = new Date("0001-01-01T00:00:00.000Z");
@@ -28,12 +29,12 @@ function should_have_qbt_jobcode(cont: contract_route_doc): boolean {
     return is_active && is_awarded(cont);
 }
 
-async function bootstrap_jobcodes(qbt: QbtClient): Promise<void> {
+async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     console.log("[jobcodes] Running bootstrap: matching QBT jobcodes to contracts by route name...");
-    const map_col = qbt_object_map_col();
+    const map_col = get_qbt_map_collection();
 
     // Load all contracts to search against
-    const all_contracts = await contracts_col().find({}).toArray();
+    const all_contracts = await get_cont_collection().find({}).toArray();
 
     let page = 1;
     while (true) {
@@ -74,8 +75,8 @@ async function bootstrap_jobcodes(qbt: QbtClient): Promise<void> {
     console.log("[jobcodes] Bootstrap complete.");
 }
 
-async function sync_contract(cont: contract_route_doc, qbt: QbtClient): Promise<void> {
-    const map_col = qbt_object_map_col();
+async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise<void> {
+    const map_col = get_qbt_map_collection();
     const want = should_have_qbt_jobcode(cont);
     const mapping = await map_col.findOne({ type: "jobcode", our_id: cont._id });
 
@@ -108,7 +109,7 @@ async function sync_contract(cont: contract_route_doc, qbt: QbtClient): Promise<
     }
 }
 
-export async function sync_jobcodes(qbt: QbtClient): Promise<void> {
+export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
 
     if (!state.jobcodes.bootstrap_complete) {
@@ -118,7 +119,7 @@ export async function sync_jobcodes(qbt: QbtClient): Promise<void> {
     const since = state.jobcodes.last_synced ?? new Date(0);
     console.log(`[jobcodes] Delta sync since ${since.toISOString()}`);
 
-    const changed = await contracts_col()
+    const changed = await get_cont_collection()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 

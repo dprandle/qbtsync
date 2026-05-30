@@ -3,10 +3,10 @@ import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users } from "./sync_users";
 import { sync_jobcodes } from "./sync_jobcodes";
-import { sync_assignments } from "../../../.emacs.d/backup/!home!dprandle!projects!qbtsync!src!sync_assignments.ts~";
+import { sync_assignments } from "./sync_assignments";
 import { QbtApiClient } from "./qbt_client";
 import { seed_mock_qbt } from "./qbt_mock_seed";
-import { QbtClient } from "./qbt_client_interface";
+import { qbt_client } from "./qbt_client_interface";
 import { config } from "./config";
 
 const force_full_import = process.argv.includes("--full-import");
@@ -16,7 +16,7 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function run_timesheet_loop(qbt: QbtClient): Promise<void> {
+async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     if (force_full_import || !state.timesheets.full_import_complete) {
         await full_import(qbt);
@@ -34,7 +34,7 @@ async function run_timesheet_loop(qbt: QbtClient): Promise<void> {
     }
 }
 
-async function run_user_loop(qbt: QbtClient): Promise<void> {
+async function run_user_loop(qbt: qbt_client): Promise<void> {
     console.log(`[users] Starting sync loop (interval: ${config.user_sync_interval_ms}ms)`);
     while (true) {
         try {
@@ -46,7 +46,7 @@ async function run_user_loop(qbt: QbtClient): Promise<void> {
     }
 }
 
-async function run_jobcode_loop(qbt: QbtClient): Promise<void> {
+async function run_jobcode_loop(qbt: qbt_client): Promise<void> {
     console.log(`[jobcodes] Starting sync loop (interval: ${config.jobcode_sync_interval_ms}ms)`);
     while (true) {
         try {
@@ -58,7 +58,7 @@ async function run_jobcode_loop(qbt: QbtClient): Promise<void> {
     }
 }
 
-async function run_assignment_loop(qbt: QbtClient): Promise<void> {
+async function run_assignment_loop(qbt: qbt_client): Promise<void> {
     console.log(`[assignments] Starting sync loop (interval: ${config.assignment_sync_interval_ms}ms)`);
     while (true) {
         try {
@@ -79,7 +79,7 @@ async function main(): Promise<void> {
     await connect();
 
     try {
-        let qbt: QbtClient;
+        let qbt: qbt_client;
         if (config.qbt_env === "dev") {
             console.log("[dev] QBT_ENV=dev — using mock QBT backed by MongoDB");
             qbt = await seed_mock_qbt();
