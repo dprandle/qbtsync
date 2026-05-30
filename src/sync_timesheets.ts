@@ -3,20 +3,26 @@ import { save_timesheet_state, load_sync_state } from "./sync_state";
 import { get_trec_collection, get_qbt_map_collection } from "./db";
 import { qbt_timesheet, time_record, QBT_ACTIVE } from "./types";
 import { qbt_client } from "./qbt_client_interface";
+import { INVALID_DATETIME } from "./assignments";
+
+const SCHEMA_VERSION = 1;
 
 function timesheet_to_time_record(ts: qbt_timesheet): time_record {
-    const now = new Date();
-    return {
-        _id: randomUUID(),
-        hrid: "",
-        cont_id: "",
-        notes: ts.notes,
-        start: new Date(ts.start),
-        end: new Date(ts.end),
-        date: new Date(ts.date),
-        created_at: now,
-        updated_at: now,
-    };
+  const now = new Date();
+  return {
+    _id: randomUUID(),
+    custom_params: {},
+    archived_info: {by: "", on: INVALID_DATETIME},
+    last_update: { by: "qbtsync", on: now },
+    created: { by: "qbtsync", on: now },
+    schema_version: SCHEMA_VERSION,
+    hrid: "",
+    cont_id: "",
+    notes: ts.notes,
+    start: new Date(ts.start),
+    end: new Date(ts.end),
+    date: new Date(ts.date),
+  };
 }
 
 function dates_approx_equal(a: Date, b: string): boolean {
@@ -169,7 +175,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
 
             if (mapping) {
                 const our_updated_at = mapping.our_updated_at ?? new Date(0);
-                if (rec.updated_at > our_updated_at) {
+                if (rec.last_update.on > our_updated_at) {
                     // Desktop-originated edit — push to QBT
                     const updated = await qbt.update_timesheet(mapping.qbt_id, {
                         notes: rec.notes,
@@ -222,10 +228,10 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
             console.error(`[timesheets] Outbound error for time_record ${rec._id}:`, err);
         }
 
-        if (rec.updated_at > latest_updated) latest_updated = rec.updated_at;
+        if (rec.last_update.on > latest_updated) latest_updated = rec.last_update.on;
     }
 
     if (latest_updated > since) {
-        await save_timesheet_state({ outbound_last_synced: latest_updated });
+        save_timesheet_state({ outbound_last_synced: latest_updated });
     }
 }

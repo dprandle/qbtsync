@@ -3,8 +3,8 @@ import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users } from "./sync_users";
 import { sync_jobcodes } from "./sync_jobcodes";
-import { QbtApiClient } from "./qbt_client";
-import { seed_mock_qbt } from "./qbt_mock_seed";
+import { qbt_api_client } from "./qbt_client";
+import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
 import { config } from "./config";
 
@@ -68,10 +68,10 @@ async function main(): Promise<void> {
     try {
         let qbt: qbt_client;
         if (config.qbt_env === "dev") {
-            console.log("[dev] QBT_ENV=dev — using mock QBT backed by MongoDB");
-            qbt = await seed_mock_qbt();
+            console.log("[dev] QBT_ENV=dev — using mock QBT backed by MongoDB (run 'npm run seed_mock_db' to populate it)");
+            qbt = new qbt_mock_client();
         } else {
-            qbt = new QbtApiClient();
+            qbt = new qbt_api_client();
         }
 
         await Promise.all([

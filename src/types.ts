@@ -116,9 +116,9 @@ export type time_record = {
   hrid: string; // hresource id
   cont_id: string; // contract id
   notes: string;
+  date: Date;
   start: Date;
   end: Date;
-  Date: Date;
 };
 
 // Minimal projections of UberMail MongoDB documents (only fields the sync service queries)

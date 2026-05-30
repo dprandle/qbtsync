@@ -90,7 +90,13 @@ File on disk (not in MongoDB) that persists cursors and bootstrap flags across r
 
 *** Mock QBT database (dev mode only)
 
-When =QBT_ENV=dev=, all QBT reads and writes go to a separate MongoDB database (=MOCK_QBT_DB_NAME=, default =mock_qbt=) instead of the real QBT API. The mock is seeded from live QBT data on every startup. Collections mirror the QBT entity names: =users=, =jobcodes=, =jobcode_assignments=, =timesheets=.
+When =QBT_ENV=dev=, all QBT reads and writes go to a separate MongoDB database (=MOCK_QBT_DB_NAME=, default =mock_qbt=) instead of the real QBT API. Collections mirror the QBT entity names: =users=, =jobcodes=, =jobcode_assignments=, =timesheets=.
+
+Seeding the mock is a separate step, not done automatically on startup. =npm run seed_mock_db= clears the mock collections and copies a full snapshot of the live QBT data into them (timesheets are pulled from =TIMESHEET_START_DATE= onward). Run it whenever you want a fresh snapshot:
+
+#+begin_src sh
+npm run seed_mock_db
+#+end_src
 
 ** Setup
 
@@ -119,6 +125,7 @@ cp .env.example .env
 | =QBT_ACCESS_TOKEN=          | Yes      | —          | QBT bearer token (no =Bearer= prefix)                    |
 | =QBT_ENV=                   | No       | =prod=     | Set to =dev= to use mock QBT                             |
 | =MOCK_QBT_DB_NAME=          | No       | =mock_qbt= | Database for mock QBT collections (dev mode only)        |
+| =TIMESHEET_START_DATE=      | No       | =2024-01-01= | Earliest date for timesheet =start_date= queries (YYYY-MM-DD) |
 | =TIMESHEET_SYNC_INTERVAL_MS= | No      | =60000=    | Inbound + outbound timesheet poll interval               |
 | =USER_SYNC_INTERVAL_MS=     | No       | =60000=    | User delta sync interval                                 |
 | =JOBCODE_SYNC_INTERVAL_MS=  | No       | =60000=    | Jobcode delta sync interval                              |
@@ -127,9 +134,10 @@ cp .env.example .env
 
 *** Development
 
-Starts with =QBT_ENV=dev= automatically. On startup the mock QBT database is wiped and re-seeded from live QBT data, then all sync loops run against the mock.
+Starts with =QBT_ENV=dev= automatically, running all sync loops against the mock QBT database (no writes to production QBT). The mock is *not* seeded automatically — populate it first with =npm run seed_mock_db= (see [[*Mock QBT database (dev mode only)][Mock QBT database (dev mode only)]]).
 
 #+begin_src sh
+npm run seed_mock_db   # one-time / whenever you want a fresh snapshot
 npm run dev
 #+end_src
 
