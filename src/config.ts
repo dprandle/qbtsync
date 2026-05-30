@@ -20,5 +20,4 @@ export const config = {
     timesheet_sync_interval_ms: optional_int("TIMESHEET_SYNC_INTERVAL_MS", 60_000),
     user_sync_interval_ms: optional_int("USER_SYNC_INTERVAL_MS", 60_000),
     jobcode_sync_interval_ms: optional_int("JOBCODE_SYNC_INTERVAL_MS", 60_000),
-    assignment_sync_interval_ms: optional_int("ASSIGNMENT_SYNC_INTERVAL_MS", 300_000),
 };

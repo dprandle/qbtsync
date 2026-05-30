@@ -1,8 +1,7 @@
 import { randomUUID } from "crypto";
 import { save_timesheet_state, load_sync_state } from "./sync_state";
-import { get_trec_collection } from "./db";
-import { get_qbt_map_collection } from "./get_qbt_map_collection";
-import { qbt_timesheet, time_record } from "./types";
+import { get_trec_collection, get_qbt_map_collection } from "./db";
+import { qbt_timesheet, time_record, QBT_ACTIVE } from "./types";
 import { qbt_client } from "./qbt_client_interface";
 
 function timesheet_to_time_record(ts: qbt_timesheet): time_record {
@@ -80,6 +79,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<voi
             qbt_id: ts.id,
             our_id: rec._id,
             type: "timesheet",
+            qbt_status: QBT_ACTIVE,
             qbt_modified: incoming_modified,
             our_updated_at: new Date(),
         });
@@ -212,6 +212,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
                     qbt_id: created.id,
                     our_id: rec._id,
                     type: "timesheet",
+                    qbt_status: QBT_ACTIVE,
                     qbt_modified: new Date(created.last_modified),
                     our_updated_at: now,
                 });

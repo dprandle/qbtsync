@@ -2,14 +2,17 @@
 
 A Node/TypeScript service that keeps QuickBooks Time (QBT) in sync with the UberMail MongoDB database. It is the sole authority for all QBT writes — the UberMail desktop app makes no direct QBT API calls.
 
-Four entity types are synced, each on its own independent polling loop:
+Three entity types are synced, each on its own independent polling loop:
 
 | Loop              | Direction          | Interval env var                  |
 |-------------------+--------------------+-----------------------------------|
 | Users             | MongoDB ↔ QBT      | =USER_SYNC_INTERVAL_MS=           |
 | Jobcodes          | MongoDB ↔ QBT      | =JOBCODE_SYNC_INTERVAL_MS=        |
-| Jobcode assignments | MongoDB ↔ QBT    | =ASSIGNMENT_SYNC_INTERVAL_MS=     |
 | Timesheets        | QBT ↔ MongoDB      | =TIMESHEET_SYNC_INTERVAL_MS=      |
+
+Jobcode assignments are reconciled inline as part of the user and jobcode loops
+(an assignment can only change when its contract or hresource changes), so they
+no longer have a dedicated loop.
 
 ** How it works
 
@@ -119,7 +122,6 @@ cp .env.example .env
 | =TIMESHEET_SYNC_INTERVAL_MS= | No      | =60000=    | Inbound + outbound timesheet poll interval               |
 | =USER_SYNC_INTERVAL_MS=     | No       | =60000=    | User delta sync interval                                 |
 | =JOBCODE_SYNC_INTERVAL_MS=  | No       | =60000=    | Jobcode delta sync interval                              |
-| =ASSIGNMENT_SYNC_INTERVAL_MS= | No     | =300000=   | Jobcode assignment reconciliation interval               |
 
 ** Usage
 

@@ -32,6 +32,8 @@ export type fetch_jobcodes_result = {
 
 export type fetch_assignments_opts = {
     page?: number;
+    jobcode_ids?: number[];
+    user_ids?: number[];
 };
 
 export type fetch_assignments_result = {

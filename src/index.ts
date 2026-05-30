@@ -3,7 +3,6 @@ import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users } from "./sync_users";
 import { sync_jobcodes } from "./sync_jobcodes";
-import { sync_assignments } from "./sync_assignments";
 import { QbtApiClient } from "./qbt_client";
 import { seed_mock_qbt } from "./qbt_mock_seed";
 import { qbt_client } from "./qbt_client_interface";
@@ -58,18 +57,6 @@ async function run_jobcode_loop(qbt: qbt_client): Promise<void> {
     }
 }
 
-async function run_assignment_loop(qbt: qbt_client): Promise<void> {
-    console.log(`[assignments] Starting sync loop (interval: ${config.assignment_sync_interval_ms}ms)`);
-    while (true) {
-        try {
-            await sync_assignments(qbt);
-        } catch (err) {
-            console.error("[assignments] Loop error:", err);
-        }
-        await sleep(config.assignment_sync_interval_ms);
-    }
-}
-
 async function main(): Promise<void> {
     if (do_reset) {
         reset_sync_state();
@@ -91,7 +78,6 @@ async function main(): Promise<void> {
             run_timesheet_loop(qbt),
             run_user_loop(qbt),
             run_jobcode_loop(qbt),
-            run_assignment_loop(qbt),
         ]);
     } finally {
         await disconnect();

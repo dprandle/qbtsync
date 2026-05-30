@@ -1,32 +1,17 @@
 import { randomUUID } from "crypto";
 import { save_jobcode_state, load_sync_state } from "./sync_state";
-import { get_cont_collection } from "./db";
-import { get_qbt_map_collection } from "./get_qbt_map_collection";
-import { contract_route_doc } from "./types";
+import { get_cont_collection, get_qbt_map_collection } from "./db";
+import { contract_route_doc, QBT_ACTIVE, QBT_ARCHIVED } from "./types";
 import { qbt_client } from "./qbt_client_interface";
-
-// INVALID_DATETIME sentinel stored by UberMail for un-archived documents
-const INVALID_DATETIME = new Date("0001-01-01T00:00:00.000Z");
-
-// Source_str values of the 7 hardcoded bid roles (mirrors BID_ROLES in croute.cpp).
-// A contract is "awarded" when none of these keys exist in assignments.
-const BID_ROLE_KEYS = new Set([
-    "AA_Draft_Bid[021422170000UTC]",
-    "A_Draft_Bid[021422170000UTC]",
-    "A_Draft_Bid_Verified[021422170000UTC]",
-    "B_Reviewed_Bid[021422170000UTC]",
-    "C_Submitted_Bid[021422170000UTC]",
-    "D_Submitted_Bid[021422170000UTC]",
-    "E_Submitted_Bid[021422170000UTC]",
-]);
-
-function is_awarded(cont: contract_route_doc): boolean {
-    return !Object.keys(cont.assignments).some((key) => BID_ROLE_KEYS.has(key));
-}
+import {
+    is_active,
+    is_awarded,
+    emp_hres_ids,
+    reconcile_jobcode_assignments,
+} from "./assignments";
 
 function should_have_qbt_jobcode(cont: contract_route_doc): boolean {
-    const is_active = cont.archived_info.on.getTime() <= INVALID_DATETIME.getTime();
-    return is_active && is_awarded(cont);
+    return is_active(cont.archived_info.on) && is_awarded(cont);
 }
 
 async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
@@ -61,6 +46,7 @@ async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
                 qbt_id: jc.id,
                 our_id: match._id,
                 type: "jobcode",
+                qbt_status: jc.active ? QBT_ACTIVE : QBT_ARCHIVED,
                 qbt_modified: new Date(jc.last_modified),
                 our_updated_at: null,
             });
@@ -88,25 +74,41 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
                 qbt_id: created.id,
                 our_id: cont._id,
                 type: "jobcode",
+                qbt_status: QBT_ACTIVE,
                 qbt_modified: new Date(created.last_modified),
                 our_updated_at: null,
             });
             console.log(`[jobcodes] Created QBT jobcode ${created.id} for contract ${cont._id} (${cont.route_num})`);
-        } else {
-            // Ensure the jobcode is active — fetch to check current state
-            const { jobcodes } = await qbt.fetch_jobcodes({ page: 1 });
-            const jc = jobcodes.find((j) => j.id === mapping.qbt_id);
-            if (jc && !jc.active) {
-                await qbt.set_jobcode_active(mapping.qbt_id, true);
-                console.log(`[jobcodes] Reactivated QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
-            }
+        } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
+            await qbt.set_jobcode_active(mapping.qbt_id, true);
+            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
+            console.log(`[jobcodes] Reactivated QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
         }
     } else {
-        if (mapping) {
+        if (mapping && (mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ARCHIVED) {
             await qbt.set_jobcode_active(mapping.qbt_id, false);
+            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ARCHIVED } });
             console.log(`[jobcodes] Archived QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
         }
     }
+
+    // Reconcile this jobcode's assignments now that its active state is settled.
+    const jc_map = await map_col.findOne({ type: "jobcode", our_id: cont._id });
+    if (!jc_map) return;
+    if ((jc_map.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
+        await reconcile_jobcode_assignments(qbt, jc_map.qbt_id, new Set());
+        return;
+    }
+
+    const hres_ids = [...emp_hres_ids(cont)];
+    const desired = new Set<number>();
+    if (hres_ids.length) {
+        const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
+        for (const um of user_maps) {
+            if ((um.qbt_status ?? QBT_ACTIVE) === QBT_ACTIVE) desired.add(um.qbt_id);
+        }
+    }
+    await reconcile_jobcode_assignments(qbt, jc_map.qbt_id, desired);
 }
 
 export async function sync_jobcodes(qbt: qbt_client): Promise<void> {

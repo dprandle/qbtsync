@@ -162,6 +162,8 @@ export class QbtApiClient implements qbt_client {
             limit: "100",
             page: String(opts.page ?? 1),
         };
+        if (opts.jobcode_ids?.length) params["jobcode_ids"] = opts.jobcode_ids.join(",");
+        if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
         const data = (await qbt_get("/jobcode_assignments", params)) as qbt_jobcode_assignments_response;
         return { assignments: Object.values(data.results.jobcode_assignments), more: data.more };
     }

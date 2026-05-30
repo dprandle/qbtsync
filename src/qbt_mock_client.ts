@@ -150,8 +150,11 @@ export class qbt_mock_client implements qbt_client {
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
         const page = opts.page ?? 1;
+        const filter: Record<string, unknown> = {};
+        if (opts.jobcode_ids?.length) filter["jobcode_id"] = { $in: opts.jobcode_ids };
+        if (opts.user_ids?.length) filter["user_id"] = { $in: opts.user_ids };
         const docs = await get_mock_assignments_collection()
-            .find({})
+            .find(filter)
             .skip((page - 1) * PAGE_SIZE)
             .limit(PAGE_SIZE + 1)
             .toArray();

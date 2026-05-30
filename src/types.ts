@@ -88,11 +88,18 @@ export type change_info = {
 
 export type qbt_object_type = "timesheet" | "user" | "jobcode";
 
+// Mirrors the QBT object's active flag so reconciliation can read active/archived
+// state from the map without paging QBT. 0 = archived, 1 = active.
+export type qbt_status = 0 | 1;
+export const QBT_ARCHIVED: qbt_status = 0;
+export const QBT_ACTIVE: qbt_status = 1;
+
 export type qbt_object_map = {
   _id: string;
   qbt_id: number;
   our_id: string;
   type: qbt_object_type;
+  qbt_status: qbt_status;
   qbt_modified: Date;
   // Set by the service whenever it writes a time_record from an inbound sync or outbound push.
   // Used by the outbound sync to detect desktop-originated edits (time_record.updated_at > our_updated_at).

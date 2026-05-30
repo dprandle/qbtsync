@@ -1,19 +1,16 @@
 import { randomUUID } from "crypto";
 import { save_user_state, load_sync_state } from "./sync_state";
-import { get_hres_collection } from "./db";
-import { get_qbt_map_collection } from "./get_qbt_map_collection";
+import { get_hres_collection, get_cont_collection, get_qbt_map_collection } from "./db";
+import { QBT_ACTIVE, QBT_ARCHIVED } from "./types";
 import { qbt_client } from "./qbt_client_interface";
+import { EMP_ROLE_KEYS, is_active, is_awarded, reconcile_user_assignments } from "./assignments";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
 
-// INVALID_DATETIME sentinel stored by UberMail for un-archived documents
-const INVALID_DATETIME = new Date("0001-01-01T00:00:00.000Z");
-
 function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
-    const is_active = archived_on.getTime() <= INVALID_DATETIME.getTime();
     const tracking_enabled = (tt_flags & TIME_TRACKING_APP) !== 0;
-    return is_active && tracking_enabled;
+    return is_active(archived_on) && tracking_enabled;
 }
 
 async function bootstrap_users(qbt: qbt_client): Promise<void> {
@@ -42,6 +39,7 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
                 qbt_id: qbt_user.id,
                 our_id: hres._id,
                 type: "user",
+                qbt_status: qbt_user.active ? QBT_ACTIVE : QBT_ARCHIVED,
                 qbt_modified: new Date(qbt_user.last_modified),
                 our_updated_at: null,
             });
@@ -76,26 +74,45 @@ async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, q
                 qbt_id: created.id,
                 our_id: hres_id,
                 type: "user",
+                qbt_status: QBT_ACTIVE,
                 qbt_modified: new Date(created.last_modified),
                 our_updated_at: null,
             });
             console.log(`[users] Created QBT user ${created.id} for hres ${hres_id}`);
-        } else {
-            // Ensure the QBT user is active
-            const { users } = await qbt.fetch_users({ page: 1 });
-            const qbt_user = users.find((u) => u.id === mapping.qbt_id);
-            if (qbt_user && !qbt_user.active) {
-                await qbt.set_user_active(mapping.qbt_id, true);
-                console.log(`[users] Reactivated QBT user ${mapping.qbt_id} for hres ${hres_id}`);
-            }
+        } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
+            await qbt.set_user_active(mapping.qbt_id, true);
+            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
+            console.log(`[users] Reactivated QBT user ${mapping.qbt_id} for hres ${hres_id}`);
         }
     } else {
-        if (mapping) {
+        if (mapping && (mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ARCHIVED) {
             // Archive the QBT user; keep the mapping for potential reactivation
             await qbt.set_user_active(mapping.qbt_id, false);
+            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ARCHIVED } });
             console.log(`[users] Archived QBT user ${mapping.qbt_id} for hres ${hres_id}`);
         }
     }
+
+    // Reconcile this user's assignments now that its active state is settled.
+    const user_map = await map_col.findOne({ type: "user", our_id: hres_id });
+    if (!user_map) return;
+    if ((user_map.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
+        await reconcile_user_assignments(qbt, user_map.qbt_id, new Set());
+        return;
+    }
+
+    // Find awarded+active contracts where this hres is linked under an employee role.
+    const role_filters = [...EMP_ROLE_KEYS].map((role) => ({
+        [`assignments.${role}.emp_id.source_str`]: hres_id,
+    }));
+    const contracts = await get_cont_collection().find({ $or: role_filters }).toArray();
+    const desired = new Set<number>();
+    for (const cont of contracts) {
+        if (!is_active(cont.archived_info.on) || !is_awarded(cont)) continue;
+        const jc_map = await map_col.findOne({ type: "jobcode", our_id: cont._id });
+        if (jc_map && (jc_map.qbt_status ?? QBT_ACTIVE) === QBT_ACTIVE) desired.add(jc_map.qbt_id);
+    }
+    await reconcile_user_assignments(qbt, user_map.qbt_id, desired);
 }
 
 export async function sync_users(qbt: qbt_client): Promise<void> {
