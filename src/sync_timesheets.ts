@@ -7,7 +7,7 @@ import { INVALID_DATETIME } from "./assignments";
 
 const SCHEMA_VERSION = 1;
 
-function timesheet_to_time_record(ts: qbt_timesheet): time_record {
+function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont_id: string): time_record {
   const now = new Date();
   return {
     _id: randomUUID(),
@@ -16,8 +16,8 @@ function timesheet_to_time_record(ts: qbt_timesheet): time_record {
     last_update: { by: "qbtsync", on: now },
     created: { by: "qbtsync", on: now },
     schema_version: SCHEMA_VERSION,
-    hrid: "",
-    cont_id: "",
+    hrid: hres_id,
+    cont_id: cont_id,
     notes: ts.notes,
     start: new Date(ts.start),
     end: new Date(ts.end),
@@ -30,7 +30,9 @@ function dates_approx_equal(a: Date, b: string): boolean {
     return Math.abs(a.getTime() - new Date(b).getTime()) < 1000;
 }
 
-async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<void> {
+// Returns true if the timesheet was processed (or is already up to date), false if
+// it was skipped because the QBT user/jobcode is not mapped yet and should be retried.
+async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boolean> {
     const map_col = get_qbt_map_collection();
     const incoming_modified = new Date(ts.last_modified);
 
@@ -38,7 +40,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<voi
 
     if (mapping) {
         if (incoming_modified <= mapping.qbt_modified) {
-            return; // already up to date
+            return true; // already up to date
         }
 
         const rec = await get_trec_collection().findOne({ _id: mapping.our_id });
@@ -48,7 +50,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<voi
                 { type: "timesheet", qbt_id: ts.id },
                 { $set: { qbt_modified: incoming_modified, our_updated_at: new Date() } }
             );
-            return;
+            return true;
         }
 
         const changed =
@@ -76,9 +78,23 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<voi
                 { $set: { qbt_modified: incoming_modified } }
             );
         }
+        return true;
     } else {
-        // New timesheet from QBT — create a time_record and mapping
-        const rec = timesheet_to_time_record(ts);
+        // New timesheet from QBT — reverse-map the QBT user/jobcode to our ids
+        const user_map = await map_col.findOne({ type: "user", qbt_id: ts.user_id });
+        const jobcode_map = await map_col.findOne({ type: "jobcode", qbt_id: ts.jobcode_id });
+        if (!user_map || !jobcode_map) {
+            // The user and/or jobcode haven't synced yet; skip so this is retried
+            // once those loops create the mappings (symmetric with outbound_sync).
+            console.warn(
+                `[timesheets] Skipping QBT timesheet ${ts.id}: no mapping for ` +
+                    `user_id=${ts.user_id} (${user_map ? "ok" : "missing"}), ` +
+                    `jobcode_id=${ts.jobcode_id} (${jobcode_map ? "ok" : "missing"})`
+            );
+            return false;
+        }
+
+        const rec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
         await get_trec_collection().insertOne(rec);
         await map_col.insertOne({
             _id: randomUUID(),
@@ -89,16 +105,45 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<voi
             qbt_modified: incoming_modified,
             our_updated_at: new Date(),
         });
+        return true;
     }
 }
 
-async function process_inbound_page(timesheets: qbt_timesheet[], latest_modified: Date, qbt: qbt_client): Promise<Date> {
+type inbound_progress = {
+    // Highest last_modified among timesheets that were resolved (created/updated).
+    latest_resolved: Date;
+    // Lowest last_modified among timesheets skipped for missing user/jobcode mappings.
+    earliest_unresolved: Date | null;
+};
+
+async function process_inbound_page(
+    timesheets: qbt_timesheet[],
+    progress: inbound_progress,
+    qbt: qbt_client
+): Promise<inbound_progress> {
+    let { latest_resolved, earliest_unresolved } = progress;
     for (const ts of timesheets) {
-        await upsert_timesheet(ts, qbt);
         const mod = new Date(ts.last_modified);
-        if (mod > latest_modified) latest_modified = mod;
+        const resolved = await upsert_timesheet(ts, qbt);
+        if (resolved) {
+            if (mod > latest_resolved) latest_resolved = mod;
+        } else if (!earliest_unresolved || mod < earliest_unresolved) {
+            earliest_unresolved = mod;
+        }
     }
-    return latest_modified;
+    return { latest_resolved, earliest_unresolved };
+}
+
+// The cursor must never reach or pass a skipped timesheet, so the next pass
+// re-fetches it once its user/jobcode mappings exist. Floor it at `since` so a
+// skip at/below the current cursor never moves it backwards.
+function safe_cursor(progress: inbound_progress, since: Date): Date {
+    let cursor = progress.latest_resolved;
+    if (progress.earliest_unresolved) {
+        const cap = new Date(progress.earliest_unresolved.getTime() - 1);
+        if (cap < cursor) cursor = cap;
+    }
+    return cursor < since ? since : cursor;
 }
 
 
@@ -106,7 +151,8 @@ export async function full_import(qbt: qbt_client): Promise<void> {
     console.log("[timesheets] Starting full import...");
     const state = load_sync_state();
     let page = state.timesheets.full_import_page;
-    let latest_modified = state.timesheets.last_synced ?? new Date(0);
+    const since = state.timesheets.last_synced ?? new Date(0);
+    let progress: inbound_progress = { latest_resolved: since, earliest_unresolved: null };
 
     while (true) {
         console.log(`[timesheets] Fetching page ${page}...`);
@@ -114,9 +160,9 @@ export async function full_import(qbt: qbt_client): Promise<void> {
 
         if (timesheets.length === 0) break;
 
-        latest_modified = await process_inbound_page(timesheets, latest_modified, qbt);
+        progress = await process_inbound_page(timesheets, progress, qbt);
 
-        save_timesheet_state({ full_import_page: page, last_synced: latest_modified });
+        save_timesheet_state({ full_import_page: page, last_synced: safe_cursor(progress, since) });
 
         if (!more) break;
         page++;
@@ -133,19 +179,20 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     console.log(`[timesheets] Inbound sync since ${modified_since.toISOString()}`);
 
     let page = 1;
-    let latest_modified = modified_since;
+    let progress: inbound_progress = { latest_resolved: modified_since, earliest_unresolved: null };
 
     while (true) {
         const { timesheets, more } = await qbt.fetch_timesheets({ modified_since, page });
 
         if (timesheets.length === 0) break;
 
-        latest_modified = await process_inbound_page(timesheets, latest_modified, qbt);
+        progress = await process_inbound_page(timesheets, progress, qbt);
 
         if (!more) break;
         page++;
     }
 
+    const latest_modified = safe_cursor(progress, modified_since);
     if (latest_modified > modified_since) {
         await save_timesheet_state({ last_synced: latest_modified });
         console.log(`[timesheets] Inbound cursor advanced to ${latest_modified.toISOString()}`);
