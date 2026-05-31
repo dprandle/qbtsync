@@ -1,22 +1,21 @@
+export type fetch_items_result<T> = {
+    items: T[];
+    more: boolean;
+};
+
 export type fetch_timesheets_opts = {
     modified_since?: Date;
     page?: number;
 };
 
-export type fetch_timesheets_result = {
-    timesheets: qbt_timesheet[];
-    more: boolean;
-};
+export type fetch_timesheets_result = fetch_items_result<qbt_timesheet>;
 
 export type fetch_users_opts = {
     modified_since?: Date;
     page?: number;
 };
 
-export type fetch_users_result = {
-    users: qbt_user[];
-    more: boolean;
-};
+export type fetch_users_result = fetch_items_result<qbt_user>;
 
 export type fetch_jobcodes_opts = {
     modified_since?: Date;
@@ -24,10 +23,7 @@ export type fetch_jobcodes_opts = {
     active?: boolean;
 };
 
-export type fetch_jobcodes_result = {
-    jobcodes: qbt_jobcode[];
-    more: boolean;
-};
+export type fetch_jobcodes_result = fetch_items_result<qbt_jobcode>;
 
 export type fetch_assignments_opts = {
     page?: number;
@@ -35,10 +31,7 @@ export type fetch_assignments_opts = {
     user_ids?: number[];
 };
 
-export type fetch_assignments_result = {
-    assignments: qbt_jobcode_assignment[];
-    more: boolean;
-};
+export type fetch_assignments_result = fetch_items_result<qbt_jobcode_assignment>;
 
 export type timesheet_write_data = {
     user_id: number;

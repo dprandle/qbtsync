@@ -39,16 +39,10 @@ export async function seed_mock_db(): Promise<void> {
 
     // Fetch all data from live QBT (in parallel; page logs will interleave by label)
     const [users, jobcodes, assignments, timesheets] = await Promise.all([
-        fetch_all("users", (p) => api.fetch_users({ page: p }).then((r) => ({ items: r.users, more: r.more }))),
-        fetch_all("jobcodes", (p) =>
-            api.fetch_jobcodes({ page: p }).then((r) => ({ items: r.jobcodes, more: r.more }))
-        ),
-        fetch_all("assignments", (p) =>
-            api.fetch_jobcode_assignments({ page: p }).then((r) => ({ items: r.assignments, more: r.more }))
-        ),
-        fetch_all("timesheets", (p) =>
-            api.fetch_timesheets({ page: p }).then((r) => ({ items: r.timesheets, more: r.more }))
-        ),
+        fetch_all("users", (p) => api.fetch_users({ page: p })),
+        fetch_all("jobcodes", (p) => api.fetch_jobcodes({ page: p })),
+        fetch_all("assignments", (p) => api.fetch_jobcode_assignments({ page: p })),
+        fetch_all("timesheets", (p) => api.fetch_timesheets({ page: p })),
     ]);
 
     // Insert into mock collections

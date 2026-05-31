@@ -34,7 +34,7 @@ export async function reconcile_jobcode_assignments(
     const actual = new Map<pair_key, number>(); // pair_key → assignment id
     let page = 1;
     while (true) {
-        const { assignments, more } = await qbt.fetch_jobcode_assignments({ jobcode_ids: [jobcode_id], page });
+        const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ jobcode_ids: [jobcode_id], page });
         for (const a of assignments) {
             if (a.active) actual.set(pair(a.user_id, a.jobcode_id), a.id);
         }
@@ -74,7 +74,7 @@ export async function reconcile_user_assignments(
     const actual = new Map<pair_key, number>(); // pair_key → assignment id
     let page = 1;
     while (true) {
-        const { assignments, more } = await qbt.fetch_jobcode_assignments({ user_ids: [user_id], page });
+        const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ user_ids: [user_id], page });
         for (const a of assignments) {
             if (a.active) actual.set(pair(a.user_id, a.jobcode_id), a.id);
         }

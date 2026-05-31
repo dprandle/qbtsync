@@ -163,7 +163,7 @@ export async function full_import(qbt: qbt_client): Promise<void> {
 
     while (true) {
         console.log(`[timesheets] Fetching page ${page}...`);
-        const { timesheets, more } = await qbt.fetch_timesheets({ page });
+        const { items: timesheets, more } = await qbt.fetch_timesheets({ page });
 
         if (timesheets.length === 0) break;
 
@@ -189,7 +189,7 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     let progress: inbound_progress = { latest_resolved: modified_since, earliest_unresolved: null };
 
     while (true) {
-        const { timesheets, more } = await qbt.fetch_timesheets({ modified_since, page });
+        const { items: timesheets, more } = await qbt.fetch_timesheets({ modified_since, page });
 
         if (timesheets.length === 0) break;
 

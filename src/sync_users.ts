@@ -71,7 +71,7 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
 
     let page = 1;
     while (true) {
-        const { users, more } = await qbt.fetch_users({ page });
+        const { items: users, more } = await qbt.fetch_users({ page });
         for (const qusr of users) {
             const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
             if (existing) continue;

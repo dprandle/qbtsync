@@ -52,7 +52,7 @@ async function boostrap_jobcodes_loop(qbt: qbt_client, all_contracts: contract_r
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
     while (true) {
-        const { jobcodes, more } = await qbt.fetch_jobcodes({ page, active });
+        const { items: jobcodes, more } = await qbt.fetch_jobcodes({ page, active });
         console.log(
             `[jobcodes] Trying to match ${jobcodes.length} ${active ? "active" : "archived"} jobcodes to uber contracts`
         );

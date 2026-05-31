@@ -103,7 +103,7 @@ export class qbt_api_client implements qbt_client {
             params["start_date"] = config.timesheet_start_date;
         }
         const data = (await qbt_get("/timesheets", params)) as qbt_timesheets_response;
-        return { timesheets: Object.values(data.results.timesheets), more: data.more };
+        return { items: Object.values(data.results.timesheets), more: data.more };
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
@@ -123,7 +123,7 @@ export class qbt_api_client implements qbt_client {
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
         const data = (await qbt_get("/users", params)) as qbt_users_response;
-        return { users: Object.values(data.results.users), more: data.more };
+        return { items: Object.values(data.results.users), more: data.more };
     }
 
     async create_user(d: {
@@ -150,7 +150,7 @@ export class qbt_api_client implements qbt_client {
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
         if (opts.active) params["active"] = opts.active ? "true" : "false";
         const data = (await qbt_get("/jobcodes", params)) as qbt_jobcodes_response;
-        return { jobcodes: Object.values(data.results.jobcodes), more: data.more };
+        return { items: Object.values(data.results.jobcodes), more: data.more };
     }
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
@@ -170,7 +170,7 @@ export class qbt_api_client implements qbt_client {
         if (opts.jobcode_ids?.length) params["jobcode_ids"] = opts.jobcode_ids.join(",");
         if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
         const data = (await qbt_get("/jobcode_assignments", params)) as qbt_jobcode_assignments_response;
-        return { assignments: Object.values(data.results.jobcode_assignments), more: data.more };
+        return { items: Object.values(data.results.jobcode_assignments), more: data.more };
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {

@@ -42,7 +42,7 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { timesheets: docs.slice(0, PAGE_SIZE) as qbt_timesheet[], more };
+        return { items: docs.slice(0, PAGE_SIZE) as qbt_timesheet[], more };
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
@@ -86,7 +86,7 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { users: docs.slice(0, PAGE_SIZE) as unknown as qbt_user[], more };
+        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_user[], more };
     }
 
     async create_user(d: {
@@ -127,7 +127,7 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { jobcodes: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode[], more };
+        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode[], more };
     }
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
@@ -158,7 +158,7 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { assignments: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode_assignment[], more };
+        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode_assignment[], more };
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {
