@@ -54,19 +54,19 @@ export async function seed_mock_db(): Promise<void> {
 
     // Insert into mock collections
     console.log("[seed:users] Inserting into mock collection...");
-    if (users.length > 0) await mongo.get_mock_users().insertMany(users.map(to_mock_doc) as any[]);
+    if (users.length > 0) await mongo.get_mock_users().insertMany(users.map(to_mock_doc));
     console.log(`[seed:users] Done. ${users.length} document(s) inserted.`);
 
     console.log("[seed:jobcodes] Inserting into mock collection...");
-    if (jobcodes.length > 0) await mongo.get_mock_jobcodes().insertMany(jobcodes.map(to_mock_doc) as any[]);
+    if (jobcodes.length > 0) await mongo.get_mock_jobcodes().insertMany(jobcodes.map(to_mock_doc));
     console.log(`[seed:jobcodes] Done. ${jobcodes.length} document(s) inserted.`);
 
     console.log("[seed:assignments] Inserting into mock collection...");
-    if (assignments.length > 0) await mongo.get_mock_assignments().insertMany(assignments.map(to_mock_doc) as any[]);
+    if (assignments.length > 0) await mongo.get_mock_assignments().insertMany(assignments.map(to_mock_doc));
     console.log(`[seed:assignments] Done. ${assignments.length} document(s) inserted.`);
 
     console.log("[seed:timesheets] Inserting into mock collection...");
-    if (timesheets.length > 0) await mongo.get_mock_timesheets().insertMany(timesheets.map(to_mock_doc) as any[]);
+    if (timesheets.length > 0) await mongo.get_mock_timesheets().insertMany(timesheets.map(to_mock_doc));
     console.log(`[seed:timesheets] Done. ${timesheets.length} document(s) inserted.`);
 
     console.log("[seed] Mock QBT seed complete.");

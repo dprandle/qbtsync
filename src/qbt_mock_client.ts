@@ -19,27 +19,33 @@ import { config } from "./config";
 
 const PAGE_SIZE = 100;
 
-// Mock storage uses the stringized QBT id as Mongo's `_id`. These helpers map
-// between the wire shape (`id: number`) and the stored shape (`_id: string`).
-type mock_doc<T extends { id: number }> = Omit<T, "id"> & { _id: string };
+// Mock storage uses the QBT `id` directly as Mongo's `_id`. These helpers map
+// between the wire shape (`id: number`) and the stored shape (`_id: number`).
+type allowed_types =
+| qbt_timesheet
+| qbt_jobcode
+| qbt_user
+| qbt_jobcode_assignment;
 
-export function to_mock_doc<T extends { id: number }>(item: T): mock_doc<T> {
+type mock_doc<T extends allowed_types> = Omit<T, "id"> & { _id: number };
+
+export function to_mock_doc<T extends allowed_types>(item: T): mock_doc<T> {
     const { id, ...rest } = item;
-    return { _id: String(id), ...rest } as mock_doc<T>;
+    return { _id: id, ...rest } as mock_doc<T>;
 }
 
-export function from_mock_doc<T extends { id: number }>(doc: any): T {
+export function from_mock_doc<T extends allowed_types>(doc: mock_doc<T>): T {
     const { _id, ...rest } = doc;
-    return { id: Number(_id), ...rest } as T;
+    return { id: _id, ...rest } as unknown as T;
 }
 
-async function fetch_item<T extends { id: number }>(id: number, coll_name: string): Promise<T> {
-    const coll = mongo.get_mock_db().collection(coll_name);
-    const doc = await coll.findOne({ _id: String(id) as any });
+async function fetch_item<T extends allowed_types>(id: number, coll_name: string): Promise<T> {
+    const coll = mongo.get_mock_db().collection<mock_doc<T>>(coll_name);
+    const doc = await coll.findOne({_id: id} as any);
     if (!doc) {
         throw new Error(`Could not find id ${id} in ${coll_name}`);
     }
-    return from_mock_doc<T>(doc);
+    return from_mock_doc<T>(doc as mock_doc<T>);
 }
 
 function next_mock_id(): number {
@@ -83,7 +89,7 @@ export class qbt_mock_client implements qbt_client {
             end: d.end,
             duration: 0,
             date: d.date,
-            type: d.type as "regular" | "pto",
+            type: d.type,
             active: true,
             locked: 0,
             notes: d.notes,
@@ -91,16 +97,15 @@ export class qbt_mock_client implements qbt_client {
             tz: "America/New_York",
             customfields: {},
         };
-        await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts) as any);
+        await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts));
         return ts;
     }
 
     async update_timesheet(id: number, d: Partial<timesheet_write_data>): Promise<qbt_timesheet> {
         const last_modified = now_iso();
-        await mongo
-            .get_mock_timesheets()
-            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
-        const updated = await mongo.get_mock_timesheets().findOne({ _id: String(id) } as any);
+        await mongo.get_mock_timesheets().updateOne({ _id: id }, { $set: { ...d, last_modified } });
+        const updated = await mongo.get_mock_timesheets().findOne({ _id: id });
+        if (!updated) throw new Error(`Timesheet ${id} not found after update`);
         return from_mock_doc<qbt_timesheet>(updated);
     }
 
@@ -142,16 +147,16 @@ export class qbt_mock_client implements qbt_client {
             employee_role: "employee",
             last_modified: now_iso(),
         };
-        await mongo.get_mock_users().insertOne(to_mock_doc(user) as any);
+        await mongo.get_mock_users().insertOne(to_mock_doc(user));
         return user;
     }
 
     async update_user(id: number, d: Partial<qbt_user>): Promise<qbt_user> {
         const last_modified = now_iso();
-        await mongo
-            .get_mock_users()
-            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
-        const updated = await mongo.get_mock_users().findOne({ _id: String(id) } as any);
+        const { id: _ignored, ...patch } = d;
+        await mongo.get_mock_users().updateOne({ _id: id }, { $set: { ...patch, last_modified } });
+        const updated = await mongo.get_mock_users().findOne({ _id: id });
+        if (!updated) throw new Error(`User ${id} not found after update`);
         return from_mock_doc<qbt_user>(updated);
     }
 
@@ -182,16 +187,16 @@ export class qbt_mock_client implements qbt_client {
             active: true,
             last_modified: now_iso(),
         };
-        await mongo.get_mock_jobcodes().insertOne(to_mock_doc(jc) as any);
+        await mongo.get_mock_jobcodes().insertOne(to_mock_doc(jc));
         return jc;
     }
 
     async update_jobcode(id: number, d: Partial<qbt_jobcode>): Promise<qbt_jobcode> {
         const last_modified = now_iso();
-        await mongo
-            .get_mock_jobcodes()
-            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
-        const updated = await mongo.get_mock_jobcodes().findOne({ _id: String(id) } as any);
+        const { id: _ignored, ...patch } = d;
+        await mongo.get_mock_jobcodes().updateOne({ _id: id }, { $set: { ...patch, last_modified } });
+        const updated = await mongo.get_mock_jobcodes().findOne({ _id: id });
+        if (!updated) throw new Error(`Jobcode ${id} not found after update`);
         return from_mock_doc<qbt_jobcode>(updated);
     }
 
@@ -222,11 +227,11 @@ export class qbt_mock_client implements qbt_client {
             active: true,
             last_modified: now_iso(),
         };
-        await mongo.get_mock_assignments().insertOne(to_mock_doc(asgn) as any);
+        await mongo.get_mock_assignments().insertOne(to_mock_doc(asgn));
         return asgn;
     }
 
     async delete_jobcode_assignment(id: number): Promise<void> {
-        await mongo.get_mock_assignments().deleteOne({ _id: String(id) } as any);
+        await mongo.get_mock_assignments().deleteOne({ _id: id });
     }
 }

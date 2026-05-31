@@ -39,7 +39,7 @@ export type timesheet_write_data = {
     start: string;
     end: string;
     date: string;
-    type: string;
+    type: "regular" | "pto";
     notes: string;
 };
 
@@ -120,6 +120,13 @@ export type qbt_jobcode_assignments_response = {
     };
     more: boolean;
 };
+
+// Mock-storage shapes: the wire-side `id: number` becomes Mongo's `_id: number`
+// so the mock collections can be typed natively without casts.
+export type mock_qbt_user = Omit<qbt_user, "id"> & { _id: number };
+export type mock_qbt_jobcode = Omit<qbt_jobcode, "id"> & { _id: number };
+export type mock_qbt_jobcode_assignment = Omit<qbt_jobcode_assignment, "id"> & { _id: number };
+export type mock_qbt_timesheet = Omit<qbt_timesheet, "id"> & { _id: number };
 
 export interface qbt_client {
     // Timesheets

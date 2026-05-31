@@ -4,7 +4,12 @@ import { type time_record } from "./sync_timesheets";
 import { type qbt_object_map } from "./qbt_object_map";
 import { type hresource_doc } from "./sync_users";
 import { type contract_route_doc } from "./sync_jobcodes";
-import { qbt_user, qbt_jobcode, qbt_jobcode_assignment, qbt_timesheet } from "./qbt_client_interface";
+import {
+    mock_qbt_user,
+    mock_qbt_jobcode,
+    mock_qbt_jobcode_assignment,
+    mock_qbt_timesheet,
+} from "./qbt_client_interface";
 
 let client: MongoClient;
 let db: Db;
@@ -51,20 +56,20 @@ function get_conts(): Collection<contract_route_doc> {
 
 // Mock QBT collections (dev mode only — stored in a separate DB)
 
-function get_mock_users(): Collection<qbt_user> {
-    return mock_db.collection<qbt_user>("users");
+function get_mock_users(): Collection<mock_qbt_user> {
+    return mock_db.collection<mock_qbt_user>("users");
 }
 
-function get_mock_jobcodes(): Collection<qbt_jobcode> {
-    return mock_db.collection<qbt_jobcode>("jobcodes");
+function get_mock_jobcodes(): Collection<mock_qbt_jobcode> {
+    return mock_db.collection<mock_qbt_jobcode>("jobcodes");
 }
 
-function get_mock_assignments(): Collection<qbt_jobcode_assignment> {
-    return mock_db.collection<qbt_jobcode_assignment>("jobcode_assignments");
+function get_mock_assignments(): Collection<mock_qbt_jobcode_assignment> {
+    return mock_db.collection<mock_qbt_jobcode_assignment>("jobcode_assignments");
 }
 
-function get_mock_timesheets(): Collection<qbt_timesheet> {
-    return mock_db.collection<qbt_timesheet>("timesheets");
+function get_mock_timesheets(): Collection<mock_qbt_timesheet> {
+    return mock_db.collection<mock_qbt_timesheet>("timesheets");
 }
 
 const mongo = {
