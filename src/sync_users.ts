@@ -1,5 +1,5 @@
 import mongo from "./db";
-import { save_user_state, load_sync_state } from "./sync_state";
+import { save_user_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item, QBT_ACTIVE, QBT_ARCHIVED } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user } from "./qbt_client_interface";
@@ -177,16 +177,21 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 
-    let latest = since;
+    const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
     for (const hres of changed) {
+        const at = hres.last_update.on;
         try {
             await sync_hres(hres._id, hres.tt_flags, hres.archived_info.on, qbt);
+            if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
             console.error(`[users] Error syncing hres ${hres._id}:`, err);
+            if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
+                progress.earliest_unresolved = at;
+            }
         }
-        if (hres.last_update.on > latest) latest = hres.last_update.on;
     }
 
+    const latest = safe_cursor(progress, since);
     if (latest > since) {
         save_user_state({ last_synced: latest });
         console.log(`[users] Cursor advanced to ${latest.toISOString()}`);

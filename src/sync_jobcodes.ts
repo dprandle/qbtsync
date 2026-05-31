@@ -1,5 +1,5 @@
 import mongo from "./db";
-import { save_jobcode_state, load_sync_state } from "./sync_state";
+import { save_jobcode_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { QBT_ACTIVE, QBT_ARCHIVED, create_qbt_object_map_item } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
@@ -135,13 +135,9 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
     if (mapping) {
         jci = await qbt.fetch_jobcode(mapping.qbt_id);
         const updates: Partial<qbt_jobcode> = {};
-        if (want && !jci.active) {
-            updates.active = true;
-        } else if (!want && jci.active) {
-            updates.active = false;
-        } else if (cont.route_num && jci.name !== cont.route_num) {
-            updates.name = cont.route_num;
-        }
+        if (want && !jci.active) updates.active = true;
+        if (!want && jci.active) updates.active = false;
+        if (cont.route_num && jci.name !== cont.route_num) updates.name = cont.route_num;
         if (Object.keys(updates).length > 0) {
             const new_jci = await qbt.update_jobcode(jci.id, updates);
             console.log(
@@ -152,20 +148,21 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
                 "resulting in",
                 new_jci
             );
+            jci = new_jci;
         }
     } else if (want) {
         jci = await qbt.create_jobcode({
             name: cont.route_num ?? cur_rname,
             jobcode_type: "regular",
         });
-        const mapping = create_qbt_object_map_item(
+        const new_map_obj = create_qbt_object_map_item(
             jci.id,
             cont._id,
             "jobcode",
             QBT_ACTIVE,
             new Date(jci.last_modified)
         );
-        await map_col.insertOne(mapping);
+        await map_col.insertOne(new_map_obj);
         console.log(`[jobcodes] Created QBT jobcode`, jci, `for contract  ${cur_rname} (${cont._id})`);
     }
 
@@ -202,16 +199,21 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 
-    let latest = since;
+    const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
     for (const cont of changed) {
+        const at = cont.last_update.on;
         try {
             await sync_contract(cont, qbt);
+            if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
             console.error(`[jobcodes] Error syncing contract ${cont._id}:`, err);
+            if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
+                progress.earliest_unresolved = at;
+            }
         }
-        if (cont.last_update.on > latest) latest = cont.last_update.on;
     }
 
+    const latest = safe_cursor(progress, since);
     if (latest > since) {
         save_jobcode_state({ last_synced: latest });
         console.log(`[jobcodes] Cursor advanced to ${latest.toISOString()}`);

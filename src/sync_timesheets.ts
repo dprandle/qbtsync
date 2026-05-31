@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { randomUUID } from "crypto";
-import { save_timesheet_state, load_sync_state } from "./sync_state";
+import { save_timesheet_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item, QBT_ACTIVE, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME } from "./uobj_common";
@@ -117,18 +117,11 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
     }
 }
 
-type inbound_progress = {
-    // Highest last_modified among timesheets that were resolved (created/updated).
-    latest_resolved: Date;
-    // Lowest last_modified among timesheets skipped for missing user/jobcode mappings.
-    earliest_unresolved: Date | null;
-};
-
 async function process_inbound_page(
     timesheets: qbt_timesheet[],
-    progress: inbound_progress,
+    progress: cursor_progress,
     qbt: qbt_client
-): Promise<inbound_progress> {
+): Promise<cursor_progress> {
     let { latest_resolved, earliest_unresolved } = progress;
     for (const ts of timesheets) {
         const mod = new Date(ts.last_modified);
@@ -142,24 +135,12 @@ async function process_inbound_page(
     return { latest_resolved, earliest_unresolved };
 }
 
-// The cursor must never reach or pass a skipped timesheet, so the next pass
-// re-fetches it once its user/jobcode mappings exist. Floor it at `since` so a
-// skip at/below the current cursor never moves it backwards.
-function safe_cursor(progress: inbound_progress, since: Date): Date {
-    let cursor = progress.latest_resolved;
-    if (progress.earliest_unresolved) {
-        const cap = new Date(progress.earliest_unresolved.getTime() - 1);
-        if (cap < cursor) cursor = cap;
-    }
-    return cursor < since ? since : cursor;
-}
-
 export async function full_import(qbt: qbt_client): Promise<void> {
     console.log("[timesheets] Starting full import...");
     const state = load_sync_state();
     let page = state.timesheets.full_import_page;
     const since = state.timesheets.last_synced ?? new Date(0);
-    let progress: inbound_progress = { latest_resolved: since, earliest_unresolved: null };
+    let progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
 
     while (true) {
         console.log(`[timesheets] Fetching page ${page}...`);
@@ -186,7 +167,7 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     console.log(`[timesheets] Inbound sync since ${modified_since.toISOString()}`);
 
     let page = 1;
-    let progress: inbound_progress = { latest_resolved: modified_since, earliest_unresolved: null };
+    let progress: cursor_progress = { latest_resolved: modified_since, earliest_unresolved: null };
 
     while (true) {
         const { items: timesheets, more } = await qbt.fetch_timesheets({ modified_since, page });

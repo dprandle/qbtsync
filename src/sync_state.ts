@@ -92,6 +92,23 @@ export function save_jobcode_state(update: Partial<jobcode_sync_state>): void {
     write_state(state);
 }
 
+// Tracks per-item sync progress so the cursor only advances past items that
+// were actually resolved. `earliest_unresolved` floors the cursor at one ms
+// before the earliest skipped/failed item, guaranteeing it gets re-fetched.
+export type cursor_progress = {
+    latest_resolved: Date;
+    earliest_unresolved: Date | null;
+};
+
+export function safe_cursor(progress: cursor_progress, since: Date): Date {
+    let cursor = progress.latest_resolved;
+    if (progress.earliest_unresolved) {
+        const cap = new Date(progress.earliest_unresolved.getTime() - 1);
+        if (cap < cursor) cursor = cap;
+    }
+    return cursor < since ? since : cursor;
+}
+
 export function reset_sync_state(): void {
     if (existsSync(STATE_FILE)) {
         unlinkSync(STATE_FILE);
