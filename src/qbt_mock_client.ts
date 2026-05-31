@@ -15,6 +15,7 @@ import {
     type qbt_jobcode_assignment,
 } from "./qbt_client_interface";
 import mongo from "./db";
+import { config } from "./config";
 
 const PAGE_SIZE = 100;
 
@@ -57,6 +58,8 @@ export class qbt_mock_client implements qbt_client {
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
+        } else {
+            filter["start"] = { $gte: config.timesheet_start_date };
         }
         const docs = await col
             .find(filter)

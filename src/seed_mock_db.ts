@@ -18,10 +18,16 @@ async function fetch_all<T>(
     return all;
 }
 
-async function clear_col(label: string, del: () => Promise<{ deletedCount?: number }>): Promise<void> {
-    console.log(`[seed:${label}] Clearing mock collection...`);
-    const result = await del();
-    console.log(`[seed:${label}] Cleared ${result.deletedCount ?? 0} existing document(s).`);
+async function clear_col(label: string, drop: () => Promise<boolean>): Promise<void> {
+    console.log(`[seed:${label}] Dropping mock collection...`);
+    try {
+        await drop();
+        console.log(`[seed:${label}] Dropped.`);
+    } catch (err: any) {
+        // NamespaceNotFound — collection didn't exist; nothing to do.
+        if (err?.code !== 26) throw err;
+        console.log(`[seed:${label}] Did not exist.`);
+    }
 }
 
 // Clears the mock QBT collections and repopulates them with a full copy of the
@@ -32,10 +38,10 @@ export async function seed_mock_db(): Promise<void> {
 
     // Clear all mock collections
     await Promise.all([
-        clear_col("users", () => mongo.get_mock_users().deleteMany({})),
-        clear_col("jobcodes", () => mongo.get_mock_jobcodes().deleteMany({})),
-        clear_col("assignments", () => mongo.get_mock_assignments().deleteMany({})),
-        clear_col("timesheets", () => mongo.get_mock_timesheets().deleteMany({})),
+        clear_col("users", () => mongo.get_mock_users().drop()),
+        clear_col("jobcodes", () => mongo.get_mock_jobcodes().drop()),
+        clear_col("assignments", () => mongo.get_mock_assignments().drop()),
+        clear_col("timesheets", () => mongo.get_mock_timesheets().drop()),
     ]);
 
     // Fetch all data from live QBT (in parallel; page logs will interleave by label)
