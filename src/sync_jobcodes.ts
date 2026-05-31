@@ -37,18 +37,26 @@ function should_have_active_qbt_jobcode(cont: contract_route_doc): boolean {
     return is_active(cont.archived_info.on) && is_awarded(cont);
 }
 
-// Match: find a contract whose route_num appears as a whole word in the jobcode name
-// Mirrors find_first_contract_from_jobcode logic in croute.cpp:1723
+// First find see if we find a match for any current contract route name. If no match is found, search through all route names.
 function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_doc[]) {
-    const match = all_contracts.find((c) => {
-        if (!is_awarded(c)) return false;
+    let match = all_contracts.find((c) => {
         const rname = get_current_route_name(c);
         return jc.name.toLowerCase().includes(rname.toLowerCase());
     });
+    if (!match) {
+        match = all_contracts.find((c) => {
+            for (const chg_val of c.route_names) {
+                if (jc.name.toLowerCase().includes(chg_val.val.toLowerCase())) {
+                    return true;
+                }
+            }
+            return false;
+        });
+    }
     return match;
 }
 
-async function boostrap_jobcodes_loop(qbt: qbt_client, all_contracts: contract_route_doc[], active: boolean) {
+async function boostrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contract_route_doc[], active: boolean) {
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
     while (true) {
@@ -63,7 +71,7 @@ async function boostrap_jobcodes_loop(qbt: qbt_client, all_contracts: contract_r
             });
             if (existing) continue;
 
-            const match = find_matching_contract(jc, all_contracts);
+            const match = find_matching_contract(jc, awarded_contracts);
             if (!match) {
                 console.log(`Could not find matching contract for jobcode ${jc.name} (${jc.id})`);
                 continue;
@@ -103,10 +111,13 @@ async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
 
     // Load all contracts to search against
     const all_contracts = await mongo.get_conts().find({}).toArray();
+    const all_awarded_contracts = all_contracts.filter((c) => {
+        return is_awarded(c);
+    });
 
     // We want to match all active jobcodes first, then look at archived ones
-    await boostrap_jobcodes_loop(qbt, all_contracts, true);
-    await boostrap_jobcodes_loop(qbt, all_contracts, false);
+    await boostrap_jobcodes_loop(qbt, all_awarded_contracts, true);
+    await boostrap_jobcodes_loop(qbt, all_awarded_contracts, false);
     save_jobcode_state({ bootstrap_complete: true });
     console.log("[jobcodes] Bootstrap complete.");
 }
@@ -134,7 +145,9 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
                 new Date(created.last_modified)
             );
             await map_col.insertOne(map_obj);
-            console.log(`[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`);
+            console.log(
+                `[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`
+            );
         } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
             await qbt.set_jobcode_active(mapping.qbt_id, true);
             await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
