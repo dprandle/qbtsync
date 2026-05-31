@@ -39,13 +39,11 @@ export function from_mock_doc<T extends allowed_types>(doc: mock_doc<T>): T {
     return { id: _id, ...rest } as unknown as T;
 }
 
-async function fetch_item<T extends allowed_types>(id: number, coll_name: string): Promise<T> {
-    const coll = mongo.get_mock_db().collection<mock_doc<T>>(coll_name);
-    const doc = await coll.findOne({_id: id} as any);
-    if (!doc) {
-        throw new Error(`Could not find id ${id} in ${coll_name}`);
+function expect_one<T>(items: T[], label: string, id: number): T {
+    if (items.length !== 1) {
+        throw new Error(`Expected 1 ${label} for id ${id}, got ${items.length}`);
     }
-    return from_mock_doc<T>(doc as mock_doc<T>);
+    return items[0];
 }
 
 function next_mock_id(): number {
@@ -64,9 +62,10 @@ export class qbt_mock_client implements qbt_client {
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
-        } else {
+        } else if (!opts.ids?.length) {
             filter["start"] = { $gte: config.timesheet_start_date };
         }
+        if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await col
             .find(filter)
             .skip((page - 1) * PAGE_SIZE)
@@ -77,7 +76,8 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_timesheet(id: number): Promise<qbt_timesheet> {
-        return fetch_item<qbt_timesheet>(id, "timesheets");
+        const { items } = await this.fetch_timesheets({ ids: [id] });
+        return expect_one(items, "timesheet", id);
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
@@ -114,6 +114,7 @@ export class qbt_mock_client implements qbt_client {
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         if (opts.active) filter["active"] = opts.active;
+        if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_users()
             .find(filter)
@@ -125,7 +126,8 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_user(id: number): Promise<qbt_user> {
-        return fetch_item<qbt_user>(id, "users");
+        const { items } = await this.fetch_users({ ids: [id] });
+        return expect_one(items, "user", id);
     }
 
     async create_user(d: {
@@ -164,6 +166,7 @@ export class qbt_mock_client implements qbt_client {
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         if (opts.active) filter["active"] = opts.active;
+        if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_jobcodes()
             .find(filter)
@@ -175,7 +178,8 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_jobcode(id: number): Promise<qbt_jobcode> {
-        return fetch_item<qbt_jobcode>(id, "jobcodes");
+        const { items } = await this.fetch_jobcodes({ ids: [id] });
+        return expect_one(items, "jobcode", id);
     }
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
@@ -204,6 +208,7 @@ export class qbt_mock_client implements qbt_client {
         const filter: Record<string, unknown> = {};
         if (opts.jobcode_ids?.length) filter["jobcode_id"] = { $in: opts.jobcode_ids };
         if (opts.user_ids?.length) filter["user_id"] = { $in: opts.user_ids };
+        if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_assignments()
             .find(filter)
@@ -215,7 +220,8 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_jobcode_assignment(id: number): Promise<qbt_jobcode_assignment> {
-        return fetch_item<qbt_jobcode_assignment>(id, "jobcode_assignments");
+        const { items } = await this.fetch_jobcode_assignments({ ids: [id] });
+        return expect_one(items, "jobcode_assignment", id);
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {

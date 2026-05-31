@@ -3,9 +3,27 @@ export type fetch_items_result<T> = {
     more: boolean;
 };
 
+// QBT caps responses at 100 items per page, and a by-ids request returns at
+// most one item per id — so a chunk of <=100 ids always fits in a single page.
+// Iterate chunks; no need to walk pagination within each one.
+const FETCH_BATCH_SIZE = 100;
+
+export async function fetch_all_by_ids<T>(
+    ids: number[],
+    fetch_chunk: (chunk: number[]) => Promise<fetch_items_result<T>>
+): Promise<T[]> {
+    const out: T[] = [];
+    for (let i = 0; i < ids.length; i += FETCH_BATCH_SIZE) {
+        const { items } = await fetch_chunk(ids.slice(i, i + FETCH_BATCH_SIZE));
+        out.push(...items);
+    }
+    return out;
+}
+
 export type fetch_timesheets_opts = {
     modified_since?: Date;
     page?: number;
+    ids?: number[];
 };
 
 export type fetch_timesheets_result = fetch_items_result<qbt_timesheet>;
@@ -14,6 +32,7 @@ export type fetch_users_opts = {
     modified_since?: Date;
     page?: number;
     active?: boolean;
+    ids?: number[];
 };
 
 export type fetch_users_result = fetch_items_result<qbt_user>;
@@ -22,6 +41,7 @@ export type fetch_jobcodes_opts = {
     modified_since?: Date;
     page?: number;
     active?: boolean;
+    ids?: number[];
 };
 
 export type fetch_jobcodes_result = fetch_items_result<qbt_jobcode>;
@@ -30,6 +50,7 @@ export type fetch_assignments_opts = {
     page?: number;
     jobcode_ids?: number[];
     user_ids?: number[];
+    ids?: number[];
 };
 
 export type fetch_assignments_result = fetch_items_result<qbt_jobcode_assignment>;

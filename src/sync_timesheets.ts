@@ -1,7 +1,7 @@
 import mongo from "./db";
 import { randomUUID } from "crypto";
 import { save_timesheet_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
-import { create_qbt_object_map_item, QBT_ACTIVE, QBT_UPDATE_BY } from "./qbt_object_map";
+import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME } from "./uobj_common";
 import { change_info } from "./uobj_common";
@@ -111,7 +111,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
 
         const rec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
         await mongo.get_trecs().insertOne(rec);
-        const map_obj = create_qbt_object_map_item(ts.id, rec._id, "timesheet", QBT_ACTIVE, incoming_modified);
+        const map_obj = create_qbt_object_map_item(ts.id, rec._id, "timesheet", incoming_modified);
         await map_col.insertOne(map_obj);
         return true;
     }
@@ -251,7 +251,6 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
                     created.id,
                     rec._id,
                     "timesheet",
-                    QBT_ACTIVE,
                     new Date(created.last_modified)
                 );
                 await map_col.insertOne(map_obj);

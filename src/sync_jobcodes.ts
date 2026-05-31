@@ -1,7 +1,7 @@
 import mongo from "./db";
 import { save_jobcode_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
-import { QBT_ACTIVE, QBT_ARCHIVED, create_qbt_object_map_item } from "./qbt_object_map";
-import { qbt_client, qbt_jobcode } from "./qbt_client_interface";
+import { create_qbt_object_map_item } from "./qbt_object_map";
+import { qbt_client, qbt_jobcode, fetch_all_by_ids } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
 import { is_awarded, EMP_ROLE_KEYS, reconcile_jobcode_assignments } from "./assignments";
 
@@ -56,7 +56,7 @@ function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_d
     return match;
 }
 
-async function boostrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contract_route_doc[], active: boolean) {
+async function bootstrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contract_route_doc[], active: boolean) {
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
     while (true) {
@@ -76,27 +76,21 @@ async function boostrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contra
                 console.log(`[jobcodes] Could not find matching contract for jobcode ${jc.name} (${jc.id})`);
                 continue;
             }
-            
+
             const cur_rname = get_current_route_name(match);
             const already_mapped = await map_col.findOne({
                 type: "jobcode",
                 our_id: match._id,
             });
-            
+
             if (already_mapped) {
                 console.log(
                     `[jobcodes] Found match ${cur_rname} (${match._id}) for jc ${jc.name} (${jc.id}) but contract already linked to jc ${already_mapped.qbt_id}`
                 );
                 continue;
             }
-            
-            const map_obj = create_qbt_object_map_item(
-                jc.id,
-                match._id,
-                "jobcode",
-                jc.active ? QBT_ACTIVE : QBT_ARCHIVED,
-                new Date(jc.last_modified)
-            );
+
+            const map_obj = create_qbt_object_map_item(jc.id, match._id, "jobcode", new Date(jc.last_modified));
             await map_col.insertOne(map_obj);
             console.log(
                 `[jobcodes] Bootstrap mapped contract ${get_current_route_name(match)} (${match._id}) → QBT jobcode ${jc.name} (${jc.id})`
@@ -118,8 +112,8 @@ async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     });
 
     // We want to match all active jobcodes first, then look at archived ones
-    await boostrap_jobcodes_loop(qbt, all_awarded_contracts, true);
-    await boostrap_jobcodes_loop(qbt, all_awarded_contracts, false);
+    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, true);
+    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, false);
     save_jobcode_state({ bootstrap_complete: true });
     console.log("[jobcodes] Bootstrap complete.");
 }
@@ -157,13 +151,7 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
             name: cont.route_num ?? cur_rname,
             jobcode_type: "regular",
         });
-        const new_map_obj = create_qbt_object_map_item(
-            jci.id,
-            cont._id,
-            "jobcode",
-            QBT_ACTIVE,
-            new Date(jci.last_modified)
-        );
+        const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
         await map_col.insertOne(new_map_obj);
         console.log(`[jobcodes] Created QBT jobcode`, jci, `for contract  ${cur_rname} (${cont._id})`);
     }
@@ -177,12 +165,12 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
 
     const hres_ids = [...emp_hres_ids(cont)];
     const desired = new Set<number>();
-    if (hres_ids.length) {
+    if (hres_ids.length > 0) {
         const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
-        const qbt_user_ids = user_maps.map((r) => {r.qbt_id});
-        
-        for (const um of user_maps) {
-            if ((um.qbt_status ?? QBT_ACTIVE) === QBT_ACTIVE) desired.add(um.qbt_id);
+        const qbt_user_ids = user_maps.map((r) => r.qbt_id);
+        const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids }));
+        for (const u of usrs) {
+            if (u.active) desired.add(u.id);
         }
     }
     await reconcile_jobcode_assignments(qbt, jci.id, desired);

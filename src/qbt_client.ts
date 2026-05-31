@@ -72,12 +72,11 @@ async function qbt_put(path: string, body: unknown): Promise<unknown> {
     return resp.json();
 }
 
-async function fetch_item<T>(id: number, endpoint: string): Promise<T> {
-    const data = (await qbt_get(endpoint, { ids: String(id) })) as {
-        results: Record<string, Record<string, T>>;
-    };
-    const key = endpoint.replace(/^\//, "");
-    return Object.values(data.results[key])[0];
+function expect_one<T>(items: T[], label: string, id: number): T {
+    if (items.length !== 1) {
+        throw new Error(`Expected 1 ${label} for id ${id}, got ${items.length}`);
+    }
+    return items[0];
 }
 
 async function qbt_delete(path: string, params: Record<string, string>): Promise<void> {
@@ -107,15 +106,17 @@ export class qbt_api_client implements qbt_client {
         };
         if (opts.modified_since) {
             params["modified_since"] = opts.modified_since.toISOString();
-        } else {
+        } else if (!opts.ids?.length) {
             params["start_date"] = config.timesheet_start_date;
         }
+        if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/timesheets", params)) as qbt_timesheets_response;
         return { items: Object.values(data.results.timesheets), more: data.more };
     }
 
     async fetch_timesheet(id: number): Promise<qbt_timesheet> {
-        return fetch_item<qbt_timesheet>(id, "/timesheets");
+        const { items } = await this.fetch_timesheets({ ids: [id] });
+        return expect_one(items, "timesheet", id);
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
@@ -134,13 +135,15 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
-        if (opts.active) params["active"] = opts.active ? "true": "false";
+        if (opts.active) params["active"] = opts.active ? "true" : "false";
+        if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/users", params)) as qbt_users_response;
         return { items: Object.values(data.results.users), more: data.more };
     }
 
     async fetch_user(id: number): Promise<qbt_user> {
-        return fetch_item<qbt_user>(id, "/users");
+        const { items } = await this.fetch_users({ ids: [id] });
+        return expect_one(items, "user", id);
     }
 
     async create_user(d: {
@@ -167,12 +170,14 @@ export class qbt_api_client implements qbt_client {
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
         if (opts.active) params["active"] = opts.active ? "true" : "false";
+        if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/jobcodes", params)) as qbt_jobcodes_response;
         return { items: Object.values(data.results.jobcodes), more: data.more };
     }
 
     async fetch_jobcode(id: number): Promise<qbt_jobcode> {
-        return fetch_item<qbt_jobcode>(id, "/jobcodes");
+        const { items } = await this.fetch_jobcodes({ ids: [id] });
+        return expect_one(items, "jobcode", id);
     }
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
@@ -192,12 +197,14 @@ export class qbt_api_client implements qbt_client {
         };
         if (opts.jobcode_ids?.length) params["jobcode_ids"] = opts.jobcode_ids.join(",");
         if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
+        if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/jobcode_assignments", params)) as qbt_jobcode_assignments_response;
         return { items: Object.values(data.results.jobcode_assignments), more: data.more };
     }
 
     async fetch_jobcode_assignment(id: number): Promise<qbt_jobcode_assignment> {
-        return fetch_item<qbt_jobcode_assignment>(id, "/jobcode_assignments");
+        const { items } = await this.fetch_jobcode_assignments({ ids: [id] });
+        return expect_one(items, "jobcode_assignment", id);
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {

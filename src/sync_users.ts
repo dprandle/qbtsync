@@ -1,8 +1,8 @@
 import mongo from "./db";
 import { save_user_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
-import { create_qbt_object_map_item, QBT_ACTIVE, QBT_ARCHIVED } from "./qbt_object_map";
+import { create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
-import { qbt_client, qbt_user } from "./qbt_client_interface";
+import { qbt_client, qbt_user, fetch_all_by_ids } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_user_assignments } from "./assignments";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
@@ -22,45 +22,6 @@ export type hresource_doc = {
 function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
     const tracking_enabled = (tt_flags & TIME_TRACKING_APP) !== 0;
     return is_active(archived_on) && tracking_enabled;
-}
-
-function find_matching_hres(qusr: qbt_user): Promise<hresource_doc | null> {
-    const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-    const email = qusr.email?.trim();
-    const username = qusr.username?.trim();
-    const phone = qusr.mobile_number?.trim();
-    const firstName = qusr.first_name?.trim();
-    const lastName = qusr.last_name?.trim();
-
-    const or = [];
-
-    if (email) {
-        or.push({
-            email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") },
-        });
-    }
-
-    if (username) {
-        or.push({
-            username: { $regex: new RegExp(`^${escapeRegex(username)}$`, "i") },
-        });
-    }
-
-    if (phone) {
-        or.push({
-            phone: phone, // or normalized version if needed
-        });
-    }
-
-    if (firstName && lastName) {
-        or.push({
-            first_name: { $regex: new RegExp(`^${escapeRegex(firstName)}$`, "i") },
-            last_name: { $regex: new RegExp(`^${escapeRegex(lastName)}$`, "i") },
-        });
-    }
-
-    return mongo.get_hres().findOne({ $or: or });
 }
 
 function get_hres_log_str(hr: hresource_doc): string {
@@ -103,10 +64,10 @@ async function bootstrap_users_loop(
                 continue;
             }
 
-            const already_mapped = await map_col.findOne({ type: "user", our_id: hres });
+            const already_mapped = await map_col.findOne({ type: "user", our_id: hres._id });
             if (already_mapped) {
                 console.log(
-                    `[users] Found match ${get_hres_log_str(hres)}) but hres already linked to qbt user ${already_mapped.qbt_id}`
+                    `[users] Found match ${get_hres_log_str(hres)} but hres already linked to qbt user ${already_mapped.qbt_id}`
                 );
                 continue;
             }
@@ -115,7 +76,6 @@ async function bootstrap_users_loop(
                 qusr.id,
                 hres._id,
                 "user",
-                qusr.active ? QBT_ACTIVE : QBT_ARCHIVED,
                 new Date(qusr.last_modified)
             );
             await map_col.insertOne(map_obj);
@@ -141,9 +101,9 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
     console.log("[users] Bootstrap complete.");
 }
 
-async function sync_hres(hres: hresource_doc, tt_flags: number, archived_on: Date, qbt: qbt_client): Promise<void> {
+async function sync_hres(hres: hresource_doc, qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
-    const want = should_have_qbt_user(tt_flags, archived_on);
+    const want = should_have_qbt_user(hres.tt_flags, hres.archived_info.on);
     const mapping = await map_col.findOne({ type: "user", our_id: hres._id });
 
     let usi: qbt_user | null = null;
@@ -154,11 +114,11 @@ async function sync_hres(hres: hresource_doc, tt_flags: number, archived_on: Dat
         const norm_hr_phone = normalize_phone_number(hres.phone_number);
         if (want && !usi.active) updates.active = true;
         if (!want && usi.active) updates.active = false;
-        if (usi.email != norm_hr_email) usi.email = norm_hr_email;
-        if (usi.username != norm_hr_email) usi.username = norm_hr_email;
-        if (usi.mobile_number != norm_hr_phone) usi.mobile_number = norm_hr_phone;
-        if (usi.first_name != hres.first_name) usi.first_name = hres.first_name;
-        if (usi.last_name != hres.last_name) usi.last_name = hres.last_name;
+        if (usi.email != norm_hr_email) updates.email = norm_hr_email;
+        if (usi.username != norm_hr_email) updates.username = norm_hr_email;
+        if (usi.mobile_number != norm_hr_phone) updates.mobile_number = norm_hr_phone;
+        if (usi.first_name != hres.first_name) updates.first_name = hres.first_name;
+        if (usi.last_name != hres.last_name) updates.last_name = hres.last_name;
         if (Object.keys(updates).length > 0) {
             const new_usi = await qbt.update_user(usi.id, updates);
             console.log(
@@ -173,14 +133,15 @@ async function sync_hres(hres: hresource_doc, tt_flags: number, archived_on: Dat
         }
     } else if (want) {
         // Create a new QBT user for this hresource
+        const norm_hr_email = normalize_email(hres.email);
         usi = await qbt.create_user({
-            username: hres.email,
-            email: hres.email,
+            username: norm_hr_email,
+            email: norm_hr_email,
             first_name: hres.first_name,
             last_name: hres.last_name,
-            mobile_number: hres.phone_number,
+            mobile_number: normalize_phone_number(hres.phone_number),
         });
-        const map_obj = create_qbt_object_map_item(usi.id, hres._id, "user", QBT_ACTIVE, new Date(usi.last_modified));
+        const map_obj = create_qbt_object_map_item(usi.id, hres._id, "user", new Date(usi.last_modified));
         await map_col.insertOne(map_obj);
         console.log(`[users] Created QBT user`, usi, ` for hres ${get_hres_log_str(hres)}`);
     }
@@ -197,13 +158,18 @@ async function sync_hres(hres: hresource_doc, tt_flags: number, archived_on: Dat
         [`assignments.${role}.emp_id.source_str`]: hres._id,
     }));
     const contracts = await mongo.get_conts().find({ $or: role_filters }).toArray();
+    const cont_ids = contracts.filter((c) => is_active(c.archived_info.on) && is_awarded(c)).map((c) => c._id);
+
     const desired = new Set<number>();
-    for (const cont of contracts) {
-        if (!is_active(cont.archived_info.on) || !is_awarded(cont)) continue;
-        const jc_map = await map_col.findOne({ type: "jobcode", our_id: cont._id });
-        if (jc_map && (jc_map.qbt_status ?? QBT_ACTIVE) === QBT_ACTIVE) desired.add(jc_map.qbt_id);
+    if (cont_ids.length > 0) {
+        const cont_maps = await map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray();
+        const qbt_jc_ids = cont_maps.map((r) => r.qbt_id);
+        const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids }));
+        for (const jc of jcs) {
+            if (jc.active) desired.add(jc.id);
+        }
     }
-    await reconcile_user_assignments(qbt, user_map.qbt_id, desired);
+    await reconcile_user_assignments(qbt, usi.id, desired);
 }
 
 export async function sync_users(qbt: qbt_client): Promise<void> {
@@ -226,7 +192,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     for (const hres of changed) {
         const at = hres.last_update.on;
         try {
-            await sync_hres(hres, hres.tt_flags, hres.archived_info.on, qbt);
+            await sync_hres(hres, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
             console.error(`[users] Error syncing hres ${hres._id}:`, err);
