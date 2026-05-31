@@ -18,15 +18,19 @@ no longer have a dedicated loop.
 
 *** Users
 
-An =hresource= should have an active QBT user when its =tt_flags= field has the =TIME_TRACKING_APP= bit (bit 0) set and the record is not archived. On first run a bootstrap pass matches existing QBT users to hresources by email and creates =qbt_object_map= entries. After that, delta syncs poll for hresources modified since the last cursor and create, reactivate, or archive QBT users as needed.
+An =hresource= should have an active QBT user when its =tt_flags= field has the =TIME_TRACKING_APP= bit (bit 0) set and the record is not archived. On first run a bootstrap pass matches existing QBT users to hresources by normalized email or username (active QBT users first, then archived, so active matches win on collision) and creates =qbt_object_map= entries. After that, delta syncs poll for hresources modified since the last cursor: the service fetches the live QBT user, computes a diff against the hresource (active state plus email, username, phone, first/last name) and pushes only the changed fields. Hresources that should have a QBT user but don't yet have one are created on the fly.
 
 *** Jobcodes
 
-A =contract_route= should have an active QBT jobcode when it is active (not archived) and awarded (no bid-role entry in its =assignments= map). On first run a bootstrap pass matches existing QBT jobcodes to contracts by route-name substring and creates mappings. New jobcodes are named after =route_num=. Contracts that become inactive or move back to bid status have their QBT jobcode archived.
+A =contract_route= should have an active QBT jobcode when it is active (not archived) and awarded (no bid-role entry in its =assignments= map). On first run a bootstrap pass matches existing QBT jobcodes to contracts by route-name substring — first against each contract's current route name, then falling back to any historical route name. After that, delta syncs poll for contracts modified since the last cursor: the service fetches the live QBT jobcode, computes a diff (active state and =route_num= drift), and pushes the changes. Contracts that become inactive or move back to bid status have their QBT jobcode archived.
 
 *** Jobcode assignments
 
-A QBT jobcode assignment ties a user to a jobcode. The desired set is all =(qbt_user_id, qbt_jobcode_id)= pairs where the hresource has =TIME_TRACKING_APP= set, the contract is active and awarded, and the hresource is linked to the contract under an Employee-tagged role. Each run fetches the full current set from QBT and diffs it against the desired set, adding and removing assignments as needed.
+A QBT jobcode assignment ties a user to a jobcode. The desired set is all =(qbt_user_id, qbt_jobcode_id)= pairs where the hresource has =TIME_TRACKING_APP= set, the contract is active and awarded, the hresource is linked to the contract under an Employee-tagged role, and both the QBT user and QBT jobcode are currently active in QBT. Each run fetches the assignments for the affected user (or jobcode) from QBT and diffs them against the desired set, adding and removing as needed.
+
+*** Sync cursors
+
+Each entity loop maintains a cursor over its source-of-truth =last_update.on= field. Within a pass, a successful item advances =latest_resolved=; an item that threw records =earliest_unresolved=. The saved cursor is floored at one millisecond before =earliest_unresolved=, so a transient failure (QBT 5xx, network blip, missing dependent mapping) never permanently skips an item — the next pass re-fetches and retries it.
 
 *** Timesheets
 
