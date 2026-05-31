@@ -72,6 +72,12 @@ async function qbt_put(path: string, body: unknown): Promise<unknown> {
     return resp.json();
 }
 
+async function fetch_item<T>(id: string, endpoint: string): Promise<T> {
+    const data = (await qbt_get(endpoint, { ids: id })) as { results: Record<string, Record<string, T>> };
+    const key = endpoint.replace(/^\//, "");
+    return Object.values(data.results[key])[0];
+}
+
 async function qbt_delete(path: string, params: Record<string, string>): Promise<void> {
     const url = new URL(`${BASE_URL}${path}`);
 
@@ -106,6 +112,10 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.timesheets), more: data.more };
     }
 
+    async fetch_timesheet(id: string): Promise<qbt_timesheet> {
+        return fetch_item<qbt_timesheet>(id, "/timesheets");
+    }
+
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
         const data = (await qbt_post("/timesheets", { data: [d] })) as qbt_timesheets_response;
         return Object.values(data.results.timesheets)[0];
@@ -124,6 +134,10 @@ export class qbt_api_client implements qbt_client {
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
         const data = (await qbt_get("/users", params)) as qbt_users_response;
         return { items: Object.values(data.results.users), more: data.more };
+    }
+
+    async fetch_user(id: string): Promise<qbt_user> {
+        return fetch_item<qbt_user>(id, "/users");
     }
 
     async create_user(d: {
@@ -153,6 +167,10 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.jobcodes), more: data.more };
     }
 
+    async fetch_jobcode(id: string): Promise<qbt_jobcode> {
+        return fetch_item<qbt_jobcode>(id, "/jobcodes");
+    }
+
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
         const data = (await qbt_post("/jobcodes", { data: [d] })) as qbt_jobcodes_response;
         return Object.values(data.results.jobcodes)[0];
@@ -171,6 +189,10 @@ export class qbt_api_client implements qbt_client {
         if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
         const data = (await qbt_get("/jobcode_assignments", params)) as qbt_jobcode_assignments_response;
         return { items: Object.values(data.results.jobcode_assignments), more: data.more };
+    }
+
+    async fetch_jobcode_assignment(id: string): Promise<qbt_jobcode_assignment> {
+        return fetch_item<qbt_jobcode_assignment>(id, "/jobcode_assignments");
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {

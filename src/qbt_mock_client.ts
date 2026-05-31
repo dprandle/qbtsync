@@ -1,4 +1,3 @@
-import { randomUUID } from "crypto";
 import {
     qbt_client,
     fetch_timesheets_opts,
@@ -18,6 +17,29 @@ import {
 import mongo from "./db";
 
 const PAGE_SIZE = 100;
+
+// Mock storage uses the stringized QBT id as Mongo's `_id`. These helpers map
+// between the wire shape (`id: number`) and the stored shape (`_id: string`).
+type mock_doc<T extends { id: number }> = Omit<T, "id"> & { _id: string };
+
+export function to_mock_doc<T extends { id: number }>(item: T): mock_doc<T> {
+    const { id, ...rest } = item;
+    return { _id: String(id), ...rest } as mock_doc<T>;
+}
+
+export function from_mock_doc<T extends { id: number }>(doc: any): T {
+    const { _id, ...rest } = doc;
+    return { id: Number(_id), ...rest } as T;
+}
+
+async function fetch_item<T extends { id: number }>(id: string, coll_name: string): Promise<T> {
+    const coll = mongo.get_mock_db().collection(coll_name);
+    const doc = await coll.findOne({ _id: id as any });
+    if (!doc) {
+        throw new Error(`Could not find id ${id} in ${coll_name}`);
+    }
+    return from_mock_doc<T>(doc);
+}
 
 function next_mock_id(): number {
     // Use a monotonically increasing integer based on time + random suffix to avoid collisions
@@ -42,7 +64,11 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { items: docs.slice(0, PAGE_SIZE) as qbt_timesheet[], more };
+        return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_timesheet>(d)), more };
+    }
+
+    async fetch_timesheet(id: string): Promise<qbt_timesheet> {
+        return fetch_item<qbt_timesheet>(id, "timesheets");
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
@@ -62,15 +88,17 @@ export class qbt_mock_client implements qbt_client {
             tz: "America/New_York",
             customfields: {},
         };
-        await mongo.get_mock_timesheets().insertOne(ts as any);
+        await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts) as any);
         return ts;
     }
 
     async update_timesheet(id: number, d: Partial<timesheet_write_data>): Promise<qbt_timesheet> {
         const last_modified = now_iso();
-        await mongo.get_mock_timesheets().updateOne({ id } as any, { $set: { ...d, last_modified } as any });
-        const updated = await mongo.get_mock_timesheets().findOne({ id } as any);
-        return updated as unknown as qbt_timesheet;
+        await mongo
+            .get_mock_timesheets()
+            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
+        const updated = await mongo.get_mock_timesheets().findOne({ _id: String(id) } as any);
+        return from_mock_doc<qbt_timesheet>(updated);
     }
 
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
@@ -86,7 +114,11 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_user[], more };
+        return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_user>(d)), more };
+    }
+
+    async fetch_user(id: string): Promise<qbt_user> {
+        return fetch_item<qbt_user>(id, "users");
     }
 
     async create_user(d: {
@@ -107,12 +139,14 @@ export class qbt_mock_client implements qbt_client {
             employee_role: "employee",
             last_modified: now_iso(),
         };
-        await mongo.get_mock_users().insertOne(user);
+        await mongo.get_mock_users().insertOne(to_mock_doc(user) as any);
         return user;
     }
 
     async set_user_active(id: number, active: boolean): Promise<void> {
-        await mongo.get_mock_users().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
+        await mongo
+            .get_mock_users()
+            .updateOne({ _id: String(id) } as any, { $set: { active, last_modified: now_iso() } });
     }
 
     async fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result> {
@@ -127,7 +161,11 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode[], more };
+        return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_jobcode>(d)), more };
+    }
+
+    async fetch_jobcode(id: string): Promise<qbt_jobcode> {
+        return fetch_item<qbt_jobcode>(id, "jobcodes");
     }
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
@@ -138,12 +176,14 @@ export class qbt_mock_client implements qbt_client {
             active: true,
             last_modified: now_iso(),
         };
-        await mongo.get_mock_jobcodes().insertOne(jc as any);
+        await mongo.get_mock_jobcodes().insertOne(to_mock_doc(jc) as any);
         return jc;
     }
 
     async set_jobcode_active(id: number, active: boolean): Promise<void> {
-        await mongo.get_mock_jobcodes().updateOne({ id } as any, { $set: { active, last_modified: now_iso() } });
+        await mongo
+            .get_mock_jobcodes()
+            .updateOne({ _id: String(id) } as any, { $set: { active, last_modified: now_iso() } });
     }
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
@@ -158,7 +198,11 @@ export class qbt_mock_client implements qbt_client {
             .limit(PAGE_SIZE + 1)
             .toArray();
         const more = docs.length > PAGE_SIZE;
-        return { items: docs.slice(0, PAGE_SIZE) as unknown as qbt_jobcode_assignment[], more };
+        return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_jobcode_assignment>(d)), more };
+    }
+
+    async fetch_jobcode_assignment(id: string): Promise<qbt_jobcode_assignment> {
+        return fetch_item<qbt_jobcode_assignment>(id, "jobcode_assignments");
     }
 
     async create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment> {
@@ -169,11 +213,11 @@ export class qbt_mock_client implements qbt_client {
             active: true,
             last_modified: now_iso(),
         };
-        await mongo.get_mock_assignments().insertOne(asgn as any);
+        await mongo.get_mock_assignments().insertOne(to_mock_doc(asgn) as any);
         return asgn;
     }
 
     async delete_jobcode_assignment(id: number): Promise<void> {
-        await mongo.get_mock_assignments().deleteOne({ id } as any);
+        await mongo.get_mock_assignments().deleteOne({ _id: String(id) } as any);
     }
 }
