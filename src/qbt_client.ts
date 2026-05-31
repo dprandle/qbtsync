@@ -134,6 +134,7 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (opts.active) params["active"] = opts.active ? "true": "false";
         const data = (await qbt_get("/users", params)) as qbt_users_response;
         return { items: Object.values(data.results.users), more: data.more };
     }

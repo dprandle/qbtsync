@@ -73,21 +73,23 @@ async function boostrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contra
 
             const match = find_matching_contract(jc, awarded_contracts);
             if (!match) {
-                console.log(`Could not find matching contract for jobcode ${jc.name} (${jc.id})`);
+                console.log(`[jobcodes] Could not find matching contract for jobcode ${jc.name} (${jc.id})`);
                 continue;
             }
+            
             const cur_rname = get_current_route_name(match);
-
             const already_mapped = await map_col.findOne({
                 type: "jobcode",
                 our_id: match._id,
             });
+            
             if (already_mapped) {
                 console.log(
-                    `Found match ${cur_rname} (${match._id}) for jc ${jc.name} (${jc.id}) but contract already linked to ${already_mapped.qbt_status == 1 ? "active" : "archived"} jc ${already_mapped.qbt_id}`
+                    `[jobcodes] Found match ${cur_rname} (${match._id}) for jc ${jc.name} (${jc.id}) but contract already linked to jc ${already_mapped.qbt_id}`
                 );
                 continue;
             }
+            
             const map_obj = create_qbt_object_map_item(
                 jc.id,
                 match._id,
@@ -177,6 +179,8 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
     const desired = new Set<number>();
     if (hres_ids.length) {
         const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
+        const qbt_user_ids = user_maps.map((r) => {r.qbt_id});
+        
         for (const um of user_maps) {
             if ((um.qbt_status ?? QBT_ACTIVE) === QBT_ACTIVE) desired.add(um.qbt_id);
         }

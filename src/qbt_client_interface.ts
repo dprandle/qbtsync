@@ -13,6 +13,7 @@ export type fetch_timesheets_result = fetch_items_result<qbt_timesheet>;
 export type fetch_users_opts = {
     modified_since?: Date;
     page?: number;
+    active?: boolean;
 };
 
 export type fetch_users_result = fetch_items_result<qbt_user>;

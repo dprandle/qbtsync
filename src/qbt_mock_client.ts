@@ -112,9 +112,8 @@ export class qbt_mock_client implements qbt_client {
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
-        if (opts.modified_since) {
-            filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
-        }
+        if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
+        if (opts.active) filter["active"] = opts.active;
         const docs = await mongo
             .get_mock_users()
             .find(filter)
