@@ -1,12 +1,7 @@
-import { contract_route_doc } from "./types";
+import { contract_route_doc } from "./sync_jobcodes"
 import { qbt_client } from "./qbt_client_interface";
 
-// INVALID_DATETIME sentinel stored by UberMail for un-archived documents
-export const INVALID_DATETIME = new Date("0001-01-01T00:00:00.000Z");
-
-// Source_str values of the 7 hardcoded bid roles (mirrors BID_ROLES in croute.cpp).
-// A contract is "awarded" when none of these keys exist in assignments.
-export const BID_ROLE_KEYS = new Set([
+const BID_ROLE_KEYS = new Set([
     "AA_Draft_Bid[021422170000UTC]",
     "A_Draft_Bid[021422170000UTC]",
     "A_Draft_Bid_Verified[021422170000UTC]",
@@ -17,30 +12,10 @@ export const BID_ROLE_KEYS = new Set([
 ]);
 
 // Employee role keys whose linked hresources should receive a jobcode assignment.
-export const EMP_ROLE_KEYS = new Set([
-    "A_Main_Carrier[021422170000UTC]",
-    "B_Sub_Carrier[021422170000UTC]",
-]);
-
-export function is_active(archived_on: Date): boolean {
-    return archived_on.getTime() <= INVALID_DATETIME.getTime();
-}
+export const EMP_ROLE_KEYS = new Set(["A_Main_Carrier[021422170000UTC]", "B_Sub_Carrier[021422170000UTC]"]);
 
 export function is_awarded(cont: contract_route_doc): boolean {
     return !Object.keys(cont.assignments).some((key) => BID_ROLE_KEYS.has(key));
-}
-
-// Collect the hresource ids linked to a contract under any employee role.
-export function emp_hres_ids(cont: contract_route_doc): Set<string> {
-    const ids = new Set<string>();
-    for (const [role_key, links] of Object.entries(cont.assignments)) {
-        if (!EMP_ROLE_KEYS.has(role_key)) continue;
-        for (const link of links) {
-            const src = link.emp_id?.source_str;
-            if (src) ids.add(src);
-        }
-    }
-    return ids;
 }
 
 type pair_key = string; // `${user_id}:${jobcode_id}`

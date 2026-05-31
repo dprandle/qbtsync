@@ -1,4 +1,4 @@
-import { connect, disconnect } from "./db";
+import mongo from "./db";
 import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users } from "./sync_users";
@@ -63,7 +63,7 @@ async function main(): Promise<void> {
         process.exit(0);
     }
 
-    await connect();
+    await mongo.connect();
 
     try {
         let qbt: qbt_client;
@@ -80,7 +80,7 @@ async function main(): Promise<void> {
             run_jobcode_loop(qbt),
         ]);
     } finally {
-        await disconnect();
+        await mongo.disconnect();
     }
 }
 

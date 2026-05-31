@@ -1,84 +1,140 @@
-import { randomUUID } from "crypto";
+import mongo from "./db";
 import { save_jobcode_state, load_sync_state } from "./sync_state";
-import { get_cont_collection, get_qbt_map_collection } from "./db";
-import { contract_route_doc, QBT_ACTIVE, QBT_ARCHIVED } from "./types";
-import { qbt_client } from "./qbt_client_interface";
-import {
-    is_active,
-    is_awarded,
-    emp_hres_ids,
-    reconcile_jobcode_assignments,
-} from "./assignments";
+import { QBT_ACTIVE, QBT_ARCHIVED, create_qbt_object_map_item } from "./qbt_object_map";
+import { qbt_client, qbt_jobcode } from "./qbt_client_interface";
+import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
+import { is_awarded, EMP_ROLE_KEYS, reconcile_jobcode_assignments } from "./assignments";
 
-function should_have_qbt_jobcode(cont: contract_route_doc): boolean {
+// Collect the hresource ids linked to a contract under any employee role.
+function emp_hres_ids(cont: contract_route_doc): Set<string> {
+    const ids = new Set<string>();
+    for (const [role_key, links] of Object.entries(cont.assignments)) {
+        if (!EMP_ROLE_KEYS.has(role_key)) continue;
+        for (const link of links) {
+            const src = link.emp_id?.source_str;
+            if (src) ids.add(src);
+        }
+    }
+    return ids;
+}
+
+export type contract_route_doc = {
+    _id: string;
+    route_num: string;
+    // keys are role_id source_str; each value is an array of crole_link objects
+    assignments: Record<string, Array<{ emp_id: { source_str: string } }>>;
+    archived_info: change_info;
+    last_update: change_info;
+    route_names: value_change_item<string>[];
+};
+
+function get_current_route_name(cont: contract_route_doc): string {
+    const ind = find_value_change_item(cont.route_names, new Date());
+    return ind !== INVALID_IND ? cont.route_names[ind].val : "";
+}
+
+function should_have_active_qbt_jobcode(cont: contract_route_doc): boolean {
     return is_active(cont.archived_info.on) && is_awarded(cont);
 }
 
-async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
-    console.log("[jobcodes] Running bootstrap: matching QBT jobcodes to contracts by route name...");
-    const map_col = get_qbt_map_collection();
+// Match: find a contract whose route_num appears as a whole word in the jobcode name
+// Mirrors find_first_contract_from_jobcode logic in croute.cpp:1723
+function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_doc[]) {
+    const match = all_contracts.find((c) => {
+        if (!is_awarded(c)) return false;
+        const rname = get_current_route_name(c);
+        return jc.name.toLowerCase().includes(rname.toLowerCase());
+    });
+    return match;
+}
 
-    // Load all contracts to search against
-    const all_contracts = await get_cont_collection().find({}).toArray();
-
+async function boostrap_jobcodes_loop(qbt: qbt_client, all_contracts: contract_route_doc[], active: boolean) {
+    const map_col = mongo.get_qbt_map_objects();
     let page = 1;
     while (true) {
-        const { jobcodes, more } = await qbt.fetch_jobcodes({ page });
-
+        const { jobcodes, more } = await qbt.fetch_jobcodes({ page, active });
+        console.log(
+            `[jobcodes] Trying to match ${jobcodes.length} ${active ? "active" : "archived"} jobcodes to uber contracts`
+        );
         for (const jc of jobcodes) {
-            const existing = await map_col.findOne({ type: "jobcode", qbt_id: jc.id });
+            const existing = await map_col.findOne({
+                type: "jobcode",
+                qbt_id: jc.id,
+            });
             if (existing) continue;
 
-            // Match: find a contract whose route_num appears as a whole word in the jobcode name
-            // Mirrors find_first_contract_from_jobcode logic in croute.cpp:1723
-            const match = all_contracts.find((c) => {
-                if (!is_awarded(c)) return false;
-                const escaped = c.route_num.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-                return new RegExp(`(?:^|\\s)${escaped}(?:\\s|$)`).test(jc.name);
-            });
-            if (!match) continue;
+            const match = find_matching_contract(jc, all_contracts);
+            if (!match) {
+                console.log(`Could not find matching contract for jobcode ${jc.name} (${jc.id})`);
+                continue;
+            }
+            const cur_rname = get_current_route_name(match);
 
-            const already_mapped = await map_col.findOne({ type: "jobcode", our_id: match._id });
-            if (already_mapped) continue;
-
-            await map_col.insertOne({
-                _id: randomUUID(),
-                qbt_id: jc.id,
-                our_id: match._id,
+            const already_mapped = await map_col.findOne({
                 type: "jobcode",
-                qbt_status: jc.active ? QBT_ACTIVE : QBT_ARCHIVED,
-                qbt_modified: new Date(jc.last_modified),
-                our_updated_at: null,
+                our_id: match._id,
             });
-            console.log(`[jobcodes] Bootstrap mapped contract ${match._id} (${match.route_num}) → QBT jobcode ${jc.id}`);
+            if (already_mapped) {
+                console.log(
+                    `Found match ${cur_rname} (${match._id}) for jc ${jc.name} (${jc.id}) but contract already linked to ${already_mapped.qbt_status == 1 ? "active" : "archived"} jc ${already_mapped.qbt_id}`
+                );
+                continue;
+            }
+            const map_obj = create_qbt_object_map_item(
+                jc.id,
+                match._id,
+                "jobcode",
+                jc.active ? QBT_ACTIVE : QBT_ARCHIVED,
+                new Date(jc.last_modified)
+            );
+            await map_col.insertOne(map_obj);
+            console.log(
+                `[jobcodes] Bootstrap mapped contract ${get_current_route_name(match)} (${match._id}) → QBT jobcode ${jc.name} (${jc.id})`
+            );
         }
 
         if (!more) break;
         page++;
     }
+}
 
-    await save_jobcode_state({ bootstrap_complete: true });
+async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
+    console.log("[jobcodes] Running bootstrap: matching QBT jobcodes to contracts by route name...");
+
+    // Load all contracts to search against
+    const all_contracts = await mongo.get_conts().find({}).toArray();
+
+    // We want to match all active jobcodes first, then look at archived ones
+    await boostrap_jobcodes_loop(qbt, all_contracts, true);
+    await boostrap_jobcodes_loop(qbt, all_contracts, false);
+    save_jobcode_state({ bootstrap_complete: true });
     console.log("[jobcodes] Bootstrap complete.");
 }
 
 async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise<void> {
-    const map_col = get_qbt_map_collection();
-    const want = should_have_qbt_jobcode(cont);
-    const mapping = await map_col.findOne({ type: "jobcode", our_id: cont._id });
+    const map_col = mongo.get_qbt_map_objects();
+    const want = should_have_active_qbt_jobcode(cont);
+    const cur_rname = get_current_route_name(cont);
+    const mapping = await map_col.findOne({
+        type: "jobcode",
+        our_id: cont._id,
+    });
 
     if (want) {
         if (!mapping) {
-            const created = await qbt.create_jobcode({ name: cont.route_num, jobcode_type: "regular" });
-            await map_col.insertOne({
-                _id: randomUUID(),
-                qbt_id: created.id,
-                our_id: cont._id,
-                type: "jobcode",
-                qbt_status: QBT_ACTIVE,
-                qbt_modified: new Date(created.last_modified),
-                our_updated_at: null,
+            const created = await qbt.create_jobcode({
+                name: cont.route_num ?? cur_rname,
+                jobcode_type: "regular",
             });
-            console.log(`[jobcodes] Created QBT jobcode ${created.id} for contract ${cont._id} (${cont.route_num})`);
+            const map_obj = create_qbt_object_map_item(
+                created.id,
+                cont._id,
+                "jobcode",
+                QBT_ACTIVE,
+                new Date(created.last_modified)
+            );
+            await map_col.insertOne(map_obj);
+            console.log(`[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`);
         } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
             await qbt.set_jobcode_active(mapping.qbt_id, true);
             await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
@@ -121,7 +177,8 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     const since = state.jobcodes.last_synced ?? new Date(0);
     console.log(`[jobcodes] Delta sync since ${since.toISOString()}`);
 
-    const changed = await get_cont_collection()
+    const changed = await mongo
+        .get_conts()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 
@@ -136,7 +193,7 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     }
 
     if (latest > since) {
-        await save_jobcode_state({ last_synced: latest });
+        save_jobcode_state({ last_synced: latest });
         console.log(`[jobcodes] Cursor advanced to ${latest.toISOString()}`);
     } else {
         console.log("[jobcodes] No contract changes.");

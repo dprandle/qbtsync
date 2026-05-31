@@ -1,83 +1,129 @@
-import { randomUUID } from "crypto";
+import mongo from "./db";
 import { save_user_state, load_sync_state } from "./sync_state";
-import { get_hres_collection, get_cont_collection, get_qbt_map_collection } from "./db";
-import { QBT_ACTIVE, QBT_ARCHIVED } from "./types";
-import { qbt_client } from "./qbt_client_interface";
-import { EMP_ROLE_KEYS, is_active, is_awarded, reconcile_user_assignments } from "./assignments";
+import { create_qbt_object_map_item, QBT_ACTIVE, QBT_ARCHIVED } from "./qbt_object_map";
+import { change_info, is_active } from "./uobj_common";
+import { qbt_client, qbt_user } from "./qbt_client_interface";
+import { EMP_ROLE_KEYS, is_awarded, reconcile_user_assignments } from "./assignments";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
+
+export type hresource_doc = {
+    _id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone_number: string;
+    tt_flags: number;
+    archived_info: change_info;
+    last_update: change_info;
+};
 
 function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
     const tracking_enabled = (tt_flags & TIME_TRACKING_APP) !== 0;
     return is_active(archived_on) && tracking_enabled;
 }
 
+function find_matching_hres(qusr: qbt_user): Promise<hresource_doc | null> {
+    const escapeRegex = (s = "") => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+    const email = qusr.email?.trim();
+    const username = qusr.username?.trim();
+    const phone = qusr.mobile_number?.trim();
+    const firstName = qusr.first_name?.trim();
+    const lastName = qusr.last_name?.trim();
+
+    const or = [];
+
+    if (email) {
+        or.push({
+            email: { $regex: new RegExp(`^${escapeRegex(email)}$`, "i") },
+        });
+    }
+
+    if (username) {
+        or.push({
+            username: { $regex: new RegExp(`^${escapeRegex(username)}$`, "i") },
+        });
+    }
+
+    if (phone) {
+        or.push({
+            phone: phone, // or normalized version if needed
+        });
+    }
+
+    if (firstName && lastName) {
+        or.push({
+            first_name: { $regex: new RegExp(`^${escapeRegex(firstName)}$`, "i") },
+            last_name: { $regex: new RegExp(`^${escapeRegex(lastName)}$`, "i") },
+        });
+    }
+
+    return mongo.get_hres().findOne({ $or: or });
+}
+
 async function bootstrap_users(qbt: qbt_client): Promise<void> {
     console.log("[users] Running bootstrap: matching QBT users to hresources by email...");
-    const map_col = get_qbt_map_collection();
+    const map_col = mongo.get_qbt_map_objects();
+
+    const all_hres = await mongo.get_hres().find({}).toArray();
 
     let page = 1;
     while (true) {
         const { users, more } = await qbt.fetch_users({ page });
-        for (const qbt_user of users) {
-            if (!qbt_user.email) continue;
-
-            const existing = await map_col.findOne({ type: "user", qbt_id: qbt_user.id });
+        for (const qusr of users) {
+            const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
             if (existing) continue;
 
-            const hres = await get_hres_collection().findOne(
-                { email: { $regex: new RegExp(`^${qbt_user.email.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") } }
-            );
+            const hres = await find_matching_hres(qusr);
             if (!hres) continue;
 
             const already_mapped = await map_col.findOne({ type: "user", our_id: hres._id });
             if (already_mapped) continue;
-
-            await map_col.insertOne({
-                _id: randomUUID(),
-                qbt_id: qbt_user.id,
-                our_id: hres._id,
-                type: "user",
-                qbt_status: qbt_user.active ? QBT_ACTIVE : QBT_ARCHIVED,
-                qbt_modified: new Date(qbt_user.last_modified),
-                our_updated_at: null,
-            });
-            console.log(`[users] Bootstrap mapped hres ${hres._id} → QBT user ${qbt_user.id} (${qbt_user.email})`);
+            const map_obj = create_qbt_object_map_item(
+                qusr.id,
+                hres._id,
+                "user",
+                qusr.active ? QBT_ACTIVE : QBT_ARCHIVED,
+                new Date(qusr.last_modified)
+            );
+            await map_col.insertOne(map_obj);
+            console.log(`[users] Bootstrap mapped hres ${hres._id} → QBT user ${qusr.id} (${qusr.email})`);
         }
         if (!more) break;
         page++;
     }
 
-    await save_user_state({ bootstrap_complete: true });
+    save_user_state({ bootstrap_complete: true });
     console.log("[users] Bootstrap complete.");
 }
 
 async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, qbt: qbt_client): Promise<void> {
-    const map_col = get_qbt_map_collection();
+    const map_col = mongo.get_qbt_map_objects();
     const want = should_have_qbt_user(tt_flags, archived_on);
     const mapping = await map_col.findOne({ type: "user", our_id: hres_id });
 
     if (want) {
         if (!mapping) {
             // Create a new QBT user for this hresource
-            const hres = await get_hres_collection().findOne({ _id: hres_id });
+            const hres = await mongo.get_hres().findOne({ _id: hres_id });
             if (!hres) return;
             const created = await qbt.create_user({
                 username: hres.email,
                 email: hres.email,
                 first_name: hres.first_name,
                 last_name: hres.last_name,
+                mobile_number: hres.phone_number,
             });
-            await map_col.insertOne({
-                _id: randomUUID(),
-                qbt_id: created.id,
-                our_id: hres_id,
-                type: "user",
-                qbt_status: QBT_ACTIVE,
-                qbt_modified: new Date(created.last_modified),
-                our_updated_at: null,
-            });
+            const map_obj = create_qbt_object_map_item(
+                created.id,
+                hres_id,
+                "user",
+                QBT_ACTIVE,
+                new Date(created.last_modified)
+            );
+            await map_col.insertOne(map_obj);
             console.log(`[users] Created QBT user ${created.id} for hres ${hres_id}`);
         } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
             await qbt.set_user_active(mapping.qbt_id, true);
@@ -105,7 +151,7 @@ async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, q
     const role_filters = [...EMP_ROLE_KEYS].map((role) => ({
         [`assignments.${role}.emp_id.source_str`]: hres_id,
     }));
-    const contracts = await get_cont_collection().find({ $or: role_filters }).toArray();
+    const contracts = await mongo.get_conts().find({ $or: role_filters }).toArray();
     const desired = new Set<number>();
     for (const cont of contracts) {
         if (!is_active(cont.archived_info.on) || !is_awarded(cont)) continue;
@@ -126,7 +172,8 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     console.log(`[users] Delta sync since ${since.toISOString()}`);
 
     // Query hresources modified since the cursor
-    const changed = await get_hres_collection()
+    const changed = await mongo
+        .get_hres()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 
@@ -141,7 +188,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     }
 
     if (latest > since) {
-        await save_user_state({ last_synced: latest });
+        save_user_state({ last_synced: latest });
         console.log(`[users] Cursor advanced to ${latest.toISOString()}`);
     } else {
         console.log("[users] No hresource changes.");

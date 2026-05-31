@@ -1,7 +1,30 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { sync_state, timesheet_sync_state, user_sync_state, jobcode_sync_state } from "./types";
 
 const STATE_FILE = "./sync_state.json";
+
+export type timesheet_sync_state = {
+    full_import_complete: boolean;
+    last_synced: Date | null; // inbound cursor: QBT modified_since
+    full_import_page: number;
+    outbound_last_synced: Date | null; // outbound cursor: time_records updated_at
+};
+
+export type user_sync_state = {
+    bootstrap_complete: boolean; // true once initial email-match bootstrap has run
+    last_synced: Date | null; // hresource last_update.on cursor
+};
+
+export type jobcode_sync_state = {
+    bootstrap_complete: boolean; // true once initial name-match bootstrap has run
+    last_synced: Date | null; // contract_route last_update.on cursor
+};
+
+export type sync_state = {
+    timesheets: timesheet_sync_state;
+    users: user_sync_state;
+    jobcodes: jobcode_sync_state;
+};
+
 
 const default_state: sync_state = {
     timesheets: {

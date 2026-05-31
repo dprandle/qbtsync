@@ -1,66 +1,85 @@
 import { MongoClient, Db, Collection } from "mongodb";
 import { config } from "./config";
-import {
-    time_record,
-    qbt_object_map,
-    hresource_doc,
-    contract_route_doc,
-    contract_role_doc,
-    qbt_user,
-    qbt_jobcode,
-    qbt_jobcode_assignment,
-    qbt_timesheet,
-} from "./types";
+import { type time_record } from "./sync_timesheets";
+import { type qbt_object_map } from "./qbt_object_map";
+import { type hresource_doc } from "./sync_users";
+import { type contract_route_doc } from "./sync_jobcodes";
+import { qbt_user, qbt_jobcode, qbt_jobcode_assignment, qbt_timesheet } from "./qbt_client_interface";
 
 let client: MongoClient;
 let db: Db;
 let mock_db: Db;
 
-export async function connect(): Promise<void> {
+async function connect(): Promise<void> {
     client = new MongoClient(config.mongo_uri);
     await client.connect();
     db = client.db(config.mongo_db_name);
     mock_db = client.db(config.mock_qbt_db_name);
     console.log(`Connected to MongoDB: ${config.mongo_db_name} (mock: ${config.mock_qbt_db_name})`);
 
-    await get_qbt_map_collection().createIndex({ type: 1, qbt_id: 1 }, { unique: true });
-    await get_qbt_map_collection().createIndex({ type: 1, our_id: 1 }, { unique: true });
+    await get_qbt_map_objects().createIndex({ type: 1, qbt_id: 1 }, { unique: true });
+    await get_qbt_map_objects().createIndex({ type: 1, our_id: 1 }, { unique: true });
 }
 
-export async function disconnect(): Promise<void> {
+async function disconnect(): Promise<void> {
     await client.close();
 }
 
-export function get_trec_collection(): Collection<time_record> {
+function get_db(): Db {
+    return db;
+}
+
+function get_mock_db(): Db {
+    return mock_db;
+}
+
+function get_trecs(): Collection<time_record> {
     return db.collection<time_record>("time_records");
 }
 
-export function get_qbt_map_collection(): Collection<qbt_object_map> {
+function get_qbt_map_objects(): Collection<qbt_object_map> {
     return db.collection<qbt_object_map>("qbt_object_map");
 }
 
-export function get_hres_collection(): Collection<hresource_doc> {
+function get_hres(): Collection<hresource_doc> {
     return db.collection<hresource_doc>("hresource");
 }
 
-export function get_cont_collection(): Collection<contract_route_doc> {
+function get_conts(): Collection<contract_route_doc> {
     return db.collection<contract_route_doc>("contract_route");
 }
 
 // Mock QBT collections (dev mode only — stored in a separate DB)
 
-export function get_mock_users_collection(): Collection<qbt_user> {
+function get_mock_users(): Collection<qbt_user> {
     return mock_db.collection<qbt_user>("users");
 }
 
-export function get_mock_jobcodes_collection(): Collection<qbt_jobcode> {
+function get_mock_jobcodes(): Collection<qbt_jobcode> {
     return mock_db.collection<qbt_jobcode>("jobcodes");
 }
 
-export function get_mock_assignments_collection(): Collection<qbt_jobcode_assignment> {
+function get_mock_assignments(): Collection<qbt_jobcode_assignment> {
     return mock_db.collection<qbt_jobcode_assignment>("jobcode_assignments");
 }
 
-export function get_mock_timesheets_collection(): Collection<qbt_timesheet> {
+function get_mock_timesheets(): Collection<qbt_timesheet> {
     return mock_db.collection<qbt_timesheet>("timesheets");
 }
+
+const mongo = {
+    connect,
+    disconnect,
+    get_db,
+    get_mock_db,
+    get_trecs,
+    get_qbt_map_objects,
+    get_hres,
+    get_conts,
+    get_mock_users,
+    get_mock_jobcodes,
+    get_mock_assignments,
+    get_mock_timesheets,
+};
+
+export default mongo;

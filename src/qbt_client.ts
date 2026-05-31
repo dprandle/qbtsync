@@ -1,15 +1,5 @@
 import { config } from "./config";
 import {
-    qbt_timesheet,
-    qbt_timesheets_response,
-    qbt_user,
-    qbt_users_response,
-    qbt_jobcode,
-    qbt_jobcodes_response,
-    qbt_jobcode_assignment,
-    qbt_jobcode_assignments_response,
-} from "./types";
-import {
     qbt_client,
     fetch_timesheets_opts,
     fetch_timesheets_result,
@@ -20,6 +10,14 @@ import {
     fetch_assignments_opts,
     fetch_assignments_result,
     timesheet_write_data,
+    type qbt_timesheet,
+    type qbt_timesheets_response,
+    type qbt_user,
+    type qbt_users_response,
+    type qbt_jobcode,
+    type qbt_jobcodes_response,
+    type qbt_jobcode_assignment,
+    type qbt_jobcode_assignments_response,
 } from "./qbt_client_interface";
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
@@ -76,6 +74,7 @@ async function qbt_put(path: string, body: unknown): Promise<unknown> {
 
 async function qbt_delete(path: string, params: Record<string, string>): Promise<void> {
     const url = new URL(`${BASE_URL}${path}`);
+
     for (const [key, val] of Object.entries(params)) {
         url.searchParams.set(key, val);
     }
@@ -127,7 +126,13 @@ export class qbt_api_client implements qbt_client {
         return { users: Object.values(data.results.users), more: data.more };
     }
 
-    async create_user(d: { username: string; email: string; first_name: string; last_name: string }): Promise<qbt_user> {
+    async create_user(d: {
+        username: string;
+        email: string;
+        first_name: string;
+        last_name: string;
+        mobile_number: string;
+    }): Promise<qbt_user> {
         const body = { data: [{ ...d, employee_role: "employee" }] };
         const data = (await qbt_post("/users", body)) as qbt_users_response;
         return Object.values(data.results.users)[0];
@@ -143,6 +148,7 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (opts.active) params["active"] = opts.active ? "true" : "false";
         const data = (await qbt_get("/jobcodes", params)) as qbt_jobcodes_response;
         return { jobcodes: Object.values(data.results.jobcodes), more: data.more };
     }

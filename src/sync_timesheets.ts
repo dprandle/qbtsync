@@ -1,28 +1,43 @@
+import mongo from "./db";
 import { randomUUID } from "crypto";
 import { save_timesheet_state, load_sync_state } from "./sync_state";
-import { get_trec_collection, get_qbt_map_collection } from "./db";
-import { qbt_timesheet, time_record, QBT_ACTIVE } from "./types";
-import { qbt_client } from "./qbt_client_interface";
-import { INVALID_DATETIME } from "./assignments";
+import { create_qbt_object_map_item, QBT_ACTIVE, QBT_UPDATE_BY } from "./qbt_object_map";
+import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
+import { INVALID_DATETIME } from "./uobj_common";
+import { change_info } from "./uobj_common";
+const TIME_RECORD_SCHEMA_VERSION = 1;
 
-const SCHEMA_VERSION = 1;
+export type time_record = {
+    _id: string;
+    custom_params: Record<string, string>;
+    archived_info: change_info;
+    last_update: change_info;
+    created: change_info;
+    schema_version: number;
+    hrid: string; // hresource id
+    cont_id: string; // contract id
+    notes: string;
+    date: Date;
+    start: Date;
+    end: Date;
+};
 
 function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont_id: string): time_record {
-  const now = new Date();
-  return {
-    _id: randomUUID(),
-    custom_params: {},
-    archived_info: {by: "", on: INVALID_DATETIME},
-    last_update: { by: "qbtsync", on: now },
-    created: { by: "qbtsync", on: now },
-    schema_version: SCHEMA_VERSION,
-    hrid: hres_id,
-    cont_id: cont_id,
-    notes: ts.notes,
-    start: new Date(ts.start),
-    end: new Date(ts.end),
-    date: new Date(ts.date),
-  };
+    const now = new Date();
+    return {
+        _id: randomUUID(),
+        custom_params: {},
+        archived_info: { by: "", on: INVALID_DATETIME },
+        last_update: { by: "qbtsync", on: now },
+        created: { by: "qbtsync", on: now },
+        schema_version: TIME_RECORD_SCHEMA_VERSION,
+        hrid: hres_id,
+        cont_id: cont_id,
+        notes: ts.notes,
+        start: new Date(ts.start),
+        end: new Date(ts.end),
+        date: new Date(ts.date),
+    };
 }
 
 function dates_approx_equal(a: Date, b: string): boolean {
@@ -33,7 +48,7 @@ function dates_approx_equal(a: Date, b: string): boolean {
 // Returns true if the timesheet was processed (or is already up to date), false if
 // it was skipped because the QBT user/jobcode is not mapped yet and should be retried.
 async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boolean> {
-    const map_col = get_qbt_map_collection();
+    const map_col = mongo.get_qbt_map_objects();
     const incoming_modified = new Date(ts.last_modified);
 
     const mapping = await map_col.findOne({ type: "timesheet", qbt_id: ts.id });
@@ -43,7 +58,7 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
             return true; // already up to date
         }
 
-        const rec = await get_trec_collection().findOne({ _id: mapping.our_id });
+        const rec = await mongo.get_trecs().findOne({ _id: mapping.our_id });
         if (!rec) {
             // Mapping exists but record is gone — just update qbt_modified
             await map_col.updateOne(
@@ -95,16 +110,9 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
         }
 
         const rec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
-        await get_trec_collection().insertOne(rec);
-        await map_col.insertOne({
-            _id: randomUUID(),
-            qbt_id: ts.id,
-            our_id: rec._id,
-            type: "timesheet",
-            qbt_status: QBT_ACTIVE,
-            qbt_modified: incoming_modified,
-            our_updated_at: new Date(),
-        });
+        await mongo.get_trecs().insertOne(rec);
+        const map_obj = create_qbt_object_map_item(ts.id, rec._id, "timesheet", QBT_ACTIVE, incoming_modified);
+        await map_col.insertOne(map_obj);
         return true;
     }
 }
@@ -145,7 +153,6 @@ function safe_cursor(progress: inbound_progress, since: Date): Date {
     }
     return cursor < since ? since : cursor;
 }
-
 
 export async function full_import(qbt: qbt_client): Promise<void> {
     console.log("[timesheets] Starting full import...");
@@ -194,7 +201,7 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
 
     const latest_modified = safe_cursor(progress, modified_since);
     if (latest_modified > modified_since) {
-        await save_timesheet_state({ last_synced: latest_modified });
+        save_timesheet_state({ last_synced: latest_modified });
         console.log(`[timesheets] Inbound cursor advanced to ${latest_modified.toISOString()}`);
     } else {
         console.log("[timesheets] No new inbound timesheets.");
@@ -205,7 +212,8 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     const since = state.timesheets.outbound_last_synced ?? new Date(0);
 
-    const candidates = await get_trec_collection()
+    const candidates = await mongo
+        .get_trecs()
         .find({ updated_at: { $gt: since } })
         .toArray();
 
@@ -213,7 +221,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
 
     console.log(`[timesheets] Outbound sync: ${candidates.length} candidate(s)`);
 
-    const map_col = get_qbt_map_collection();
+    const map_col = mongo.get_qbt_map_objects();
     let latest_updated = since;
 
     for (const rec of candidates) {
@@ -221,8 +229,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
             const mapping = await map_col.findOne({ type: "timesheet", our_id: rec._id });
 
             if (mapping) {
-                const our_updated_at = mapping.our_updated_at ?? new Date(0);
-                if (rec.last_update.on > our_updated_at) {
+                if (rec.last_update.by !== QBT_UPDATE_BY) {
                     // Desktop-originated edit — push to QBT
                     const updated = await qbt.update_timesheet(mapping.qbt_id, {
                         notes: rec.notes,
@@ -259,16 +266,14 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
                     type: "regular",
                     notes: rec.notes,
                 });
-                const now = new Date();
-                await map_col.insertOne({
-                    _id: randomUUID(),
-                    qbt_id: created.id,
-                    our_id: rec._id,
-                    type: "timesheet",
-                    qbt_status: QBT_ACTIVE,
-                    qbt_modified: new Date(created.last_modified),
-                    our_updated_at: now,
-                });
+                const map_obj = create_qbt_object_map_item(
+                    created.id,
+                    rec._id,
+                    "timesheet",
+                    QBT_ACTIVE,
+                    new Date(created.last_modified)
+                );
+                await map_col.insertOne(map_obj);
                 console.log(`[timesheets] Created QBT timesheet ${created.id} for time_record ${rec._id}`);
             }
         } catch (err) {
