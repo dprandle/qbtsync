@@ -1,6 +1,12 @@
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { resolve } from "path";
+import { config } from "./config";
 
-const STATE_FILE = "./sync_state.json";
+const STATE_FILE = config.sync_state_file;
+
+// Guards the "starting fresh" log so it fires once per process rather than on
+// every load (load_sync_state runs before each save, before the file exists).
+let logged_fresh_state = false;
 
 export type timesheet_sync_state = {
     full_import_complete: boolean;
@@ -65,7 +71,13 @@ function parse_dates(state: any): sync_state {
 }
 
 export function load_sync_state(): sync_state {
-    if (!existsSync(STATE_FILE)) return { ...default_state };
+    if (!existsSync(STATE_FILE)) {
+        if (!logged_fresh_state) {
+            console.log(`[sync_state] No state file at ${resolve(STATE_FILE)} — starting from a fresh sync state.`);
+            logged_fresh_state = true;
+        }
+        return { ...default_state };
+    }
     const raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
     return parse_dates(raw);
 }

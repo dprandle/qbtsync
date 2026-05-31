@@ -129,6 +129,7 @@ cp .env.example .env
 | =QBT_ACCESS_TOKEN=          | Yes      | —          | QBT bearer token (no =Bearer= prefix)                    |
 | =QBT_ENV=                   | No       | =prod=     | Set to =dev= to use mock QBT                             |
 | =MOCK_QBT_DB_NAME=          | No       | =mock_qbt= | Database for mock QBT collections (dev mode only)        |
+| =SYNC_STATE_FILE=           | No       | =./sync_state.json= | Path to the persisted cursor/bootstrap state file. Resolved relative to the process working directory — set it to an absolute path when running under systemd. |
 | =TIMESHEET_START_DATE=      | No       | =2024-01-01= | Earliest date for timesheet =start_date= queries (YYYY-MM-DD) |
 | =TIMESHEET_SYNC_INTERVAL_MS= | No      | =60000=    | Inbound + outbound timesheet poll interval               |
 | =USER_SYNC_INTERVAL_MS=     | No       | =60000=    | User delta sync interval                                 |
@@ -151,6 +152,41 @@ npm run dev
 npm run build
 npm start
 #+end_src
+
+*** Running as a systemd service
+
+A unit file is provided at =deploy/qbtsync.service=. It runs the built service
+as a dedicated =qbtsync= user, loads config from =/etc/qbtsync/qbtsync.env=, and
+stores =sync_state.json= under systemd's managed =StateDirectory= so the cursor
+and bootstrap flags survive restarts and redeploys.
+
+Note: =sync_state.json= is written relative to the process working directory
+unless =SYNC_STATE_FILE= is set. The unit pins it to an absolute path under
+=/var/lib/qbtsync=; do the same for any other process supervisor.
+
+#+begin_src sh
+# 1. Create the service user and place the built app
+sudo useradd --system --no-create-home --shell /usr/sbin/nologin qbtsync
+sudo mkdir -p /opt/qbtsync
+sudo rsync -a --delete dist node_modules package.json /opt/qbtsync/
+sudo chown -R qbtsync:qbtsync /opt/qbtsync
+
+# 2. Provide config + secrets (from .env.example)
+sudo mkdir -p /etc/qbtsync
+sudo install -m 600 -o qbtsync -g qbtsync .env /etc/qbtsync/qbtsync.env
+
+# 3. Install and start the unit
+sudo cp deploy/qbtsync.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now qbtsync
+
+# 4. Watch the logs
+journalctl -u qbtsync -f
+#+end_src
+
+For a force full import on a fresh database, run =node dist/index.js
+--full-import= once (as the =qbtsync= user, with the same environment) before
+enabling the unit, or temporarily append =--full-import= to =ExecStart=.
 
 *** Force full timesheet import
 
