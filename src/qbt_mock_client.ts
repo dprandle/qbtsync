@@ -33,9 +33,9 @@ export function from_mock_doc<T extends { id: number }>(doc: any): T {
     return { id: Number(_id), ...rest } as T;
 }
 
-async function fetch_item<T extends { id: number }>(id: string, coll_name: string): Promise<T> {
+async function fetch_item<T extends { id: number }>(id: number, coll_name: string): Promise<T> {
     const coll = mongo.get_mock_db().collection(coll_name);
-    const doc = await coll.findOne({ _id: id as any });
+    const doc = await coll.findOne({ _id: String(id) as any });
     if (!doc) {
         throw new Error(`Could not find id ${id} in ${coll_name}`);
     }
@@ -70,7 +70,7 @@ export class qbt_mock_client implements qbt_client {
         return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_timesheet>(d)), more };
     }
 
-    async fetch_timesheet(id: string): Promise<qbt_timesheet> {
+    async fetch_timesheet(id: number): Promise<qbt_timesheet> {
         return fetch_item<qbt_timesheet>(id, "timesheets");
     }
 
@@ -120,7 +120,7 @@ export class qbt_mock_client implements qbt_client {
         return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_user>(d)), more };
     }
 
-    async fetch_user(id: string): Promise<qbt_user> {
+    async fetch_user(id: number): Promise<qbt_user> {
         return fetch_item<qbt_user>(id, "users");
     }
 
@@ -146,10 +146,13 @@ export class qbt_mock_client implements qbt_client {
         return user;
     }
 
-    async set_user_active(id: number, active: boolean): Promise<void> {
+    async update_user(id: number, d: Partial<qbt_user>): Promise<qbt_user> {
+        const last_modified = now_iso();
         await mongo
             .get_mock_users()
-            .updateOne({ _id: String(id) } as any, { $set: { active, last_modified: now_iso() } });
+            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
+        const updated = await mongo.get_mock_users().findOne({ _id: String(id) } as any);
+        return from_mock_doc<qbt_user>(updated);
     }
 
     async fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result> {
@@ -167,7 +170,7 @@ export class qbt_mock_client implements qbt_client {
         return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_jobcode>(d)), more };
     }
 
-    async fetch_jobcode(id: string): Promise<qbt_jobcode> {
+    async fetch_jobcode(id: number): Promise<qbt_jobcode> {
         return fetch_item<qbt_jobcode>(id, "jobcodes");
     }
 
@@ -183,10 +186,13 @@ export class qbt_mock_client implements qbt_client {
         return jc;
     }
 
-    async set_jobcode_active(id: number, active: boolean): Promise<void> {
+    async update_jobcode(id: number, d: Partial<qbt_jobcode>): Promise<qbt_jobcode> {
+        const last_modified = now_iso();
         await mongo
             .get_mock_jobcodes()
-            .updateOne({ _id: String(id) } as any, { $set: { active, last_modified: now_iso() } });
+            .updateOne({ _id: String(id) } as any, { $set: { ...d, last_modified } as any });
+        const updated = await mongo.get_mock_jobcodes().findOne({ _id: String(id) } as any);
+        return from_mock_doc<qbt_jobcode>(updated);
     }
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
@@ -204,7 +210,7 @@ export class qbt_mock_client implements qbt_client {
         return { items: docs.slice(0, PAGE_SIZE).map((d) => from_mock_doc<qbt_jobcode_assignment>(d)), more };
     }
 
-    async fetch_jobcode_assignment(id: string): Promise<qbt_jobcode_assignment> {
+    async fetch_jobcode_assignment(id: number): Promise<qbt_jobcode_assignment> {
         return fetch_item<qbt_jobcode_assignment>(id, "jobcode_assignments");
     }
 

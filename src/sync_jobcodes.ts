@@ -131,35 +131,64 @@ async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise
         our_id: cont._id,
     });
 
-    if (want) {
-        if (!mapping) {
-            const created = await qbt.create_jobcode({
-                name: cont.route_num ?? cur_rname,
-                jobcode_type: "regular",
-            });
-            const map_obj = create_qbt_object_map_item(
-                created.id,
-                cont._id,
-                "jobcode",
-                QBT_ACTIVE,
-                new Date(created.last_modified)
-            );
-            await map_col.insertOne(map_obj);
-            console.log(
-                `[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`
-            );
-        } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
-            await qbt.set_jobcode_active(mapping.qbt_id, true);
-            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
-            console.log(`[jobcodes] Reactivated QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
+    if (mapping) {
+        const jci = await qbt.fetch_jobcode(mapping.qbt_id);
+        if (want && (!jci.active || (cont.route_num && jci.name != cont.route_num))) {
+            //const update_obj
         }
-    } else {
-        if (mapping && (mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ARCHIVED) {
-            await qbt.set_jobcode_active(mapping.qbt_id, false);
-            await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ARCHIVED } });
-            console.log(`[jobcodes] Archived QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
+        else {
+            
         }
     }
+    else if (want) {
+        const created = await qbt.create_jobcode({
+            name: cont.route_num ?? cur_rname,
+            jobcode_type: "regular",
+        });
+        const map_obj = create_qbt_object_map_item(
+            created.id,
+            cont._id,
+            "jobcode",
+            QBT_ACTIVE,
+            new Date(created.last_modified)
+        );
+        await map_col.insertOne(map_obj);
+        console.log(
+            `[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`
+        );
+    }
+
+    
+    // if (want) {
+        
+    //     if (!mapping) {
+    //         const created = await qbt.create_jobcode({
+    //             name: cont.route_num ?? cur_rname,
+    //             jobcode_type: "regular",
+    //         });
+    //         const map_obj = create_qbt_object_map_item(
+    //             created.id,
+    //             cont._id,
+    //             "jobcode",
+    //             QBT_ACTIVE,
+    //             new Date(created.last_modified)
+    //         );
+    //         await map_col.insertOne(map_obj);
+    //         console.log(
+    //             `[jobcodes] Created QBT jobcode ${created.name} (${created.id}) for contract  ${cur_rname} (${cont._id})`
+    //         );
+    //     } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
+    //         await qbt.set_jobcode_active(mapping.qbt_id, true);
+    //         await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
+    //         console.log(`[jobcodes] Reactivated QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
+    //     }
+    // } else {
+    //     if (mapping && (mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ARCHIVED) {
+    //         await qbt.set_jobcode_active(mapping.qbt_id, false);
+    //         await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ARCHIVED } });
+    //         console.log(`[jobcodes] Archived QBT jobcode ${mapping.qbt_id} for contract ${cont._id}`);
+    //     }
+    // }
 
     // Reconcile this jobcode's assignments now that its active state is settled.
     const jc_map = await map_col.findOne({ type: "jobcode", our_id: cont._id });

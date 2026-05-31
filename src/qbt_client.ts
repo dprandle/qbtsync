@@ -72,8 +72,10 @@ async function qbt_put(path: string, body: unknown): Promise<unknown> {
     return resp.json();
 }
 
-async function fetch_item<T>(id: string, endpoint: string): Promise<T> {
-    const data = (await qbt_get(endpoint, { ids: id })) as { results: Record<string, Record<string, T>> };
+async function fetch_item<T>(id: number, endpoint: string): Promise<T> {
+    const data = (await qbt_get(endpoint, { ids: String(id) })) as {
+        results: Record<string, Record<string, T>>;
+    };
     const key = endpoint.replace(/^\//, "");
     return Object.values(data.results[key])[0];
 }
@@ -112,7 +114,7 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.timesheets), more: data.more };
     }
 
-    async fetch_timesheet(id: string): Promise<qbt_timesheet> {
+    async fetch_timesheet(id: number): Promise<qbt_timesheet> {
         return fetch_item<qbt_timesheet>(id, "/timesheets");
     }
 
@@ -136,7 +138,7 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.users), more: data.more };
     }
 
-    async fetch_user(id: string): Promise<qbt_user> {
+    async fetch_user(id: number): Promise<qbt_user> {
         return fetch_item<qbt_user>(id, "/users");
     }
 
@@ -152,8 +154,9 @@ export class qbt_api_client implements qbt_client {
         return Object.values(data.results.users)[0];
     }
 
-    async set_user_active(id: number, active: boolean): Promise<void> {
-        await qbt_put("/users", { data: [{ id, active }] });
+    async update_user(id: number, d: Partial<qbt_user>): Promise<qbt_user> {
+        const data = (await qbt_put("/users", { data: [{ ...d, id }] })) as qbt_users_response;
+        return Object.values(data.results.users)[0];
     }
 
     async fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result> {
@@ -167,7 +170,7 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.jobcodes), more: data.more };
     }
 
-    async fetch_jobcode(id: string): Promise<qbt_jobcode> {
+    async fetch_jobcode(id: number): Promise<qbt_jobcode> {
         return fetch_item<qbt_jobcode>(id, "/jobcodes");
     }
 
@@ -176,8 +179,9 @@ export class qbt_api_client implements qbt_client {
         return Object.values(data.results.jobcodes)[0];
     }
 
-    async set_jobcode_active(id: number, active: boolean): Promise<void> {
-        await qbt_put("/jobcodes", { data: [{ id, active }] });
+    async update_jobcode(id: number, d: Partial<qbt_jobcode>): Promise<qbt_jobcode> {
+        const data = (await qbt_put("/jobcodes", { data: [{ ...d, id }] })) as qbt_jobcodes_response;
+        return Object.values(data.results.jobcodes)[0];
     }
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
@@ -191,7 +195,7 @@ export class qbt_api_client implements qbt_client {
         return { items: Object.values(data.results.jobcode_assignments), more: data.more };
     }
 
-    async fetch_jobcode_assignment(id: string): Promise<qbt_jobcode_assignment> {
+    async fetch_jobcode_assignment(id: number): Promise<qbt_jobcode_assignment> {
         return fetch_item<qbt_jobcode_assignment>(id, "/jobcode_assignments");
     }
 

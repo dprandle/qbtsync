@@ -126,14 +126,14 @@ async function sync_hres(hres_id: string, tt_flags: number, archived_on: Date, q
             await map_col.insertOne(map_obj);
             console.log(`[users] Created QBT user ${created.id} for hres ${hres_id}`);
         } else if ((mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ACTIVE) {
-            await qbt.set_user_active(mapping.qbt_id, true);
+            await qbt.update_user(mapping.qbt_id, { active: true });
             await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ACTIVE } });
             console.log(`[users] Reactivated QBT user ${mapping.qbt_id} for hres ${hres_id}`);
         }
     } else {
         if (mapping && (mapping.qbt_status ?? QBT_ACTIVE) !== QBT_ARCHIVED) {
             // Archive the QBT user; keep the mapping for potential reactivation
-            await qbt.set_user_active(mapping.qbt_id, false);
+            await qbt.update_user(mapping.qbt_id, { active: false });
             await map_col.updateOne({ _id: mapping._id }, { $set: { qbt_status: QBT_ARCHIVED } });
             console.log(`[users] Archived QBT user ${mapping.qbt_id} for hres ${hres_id}`);
         }
