@@ -19,12 +19,6 @@ export function is_awarded(cont: contract_route_doc): boolean {
     return !Object.keys(cont.assignments).some((key) => BID_ROLE_KEYS.has(key));
 }
 
-type pair_key = string; // `${user_id}:${jobcode_id}`
-
-function pair(user_id: number, jobcode_id: number): pair_key {
-    return `${user_id}:${jobcode_id}`;
-}
-
 // Reconcile a single QBT jobcode's assignments against the desired set of active
 // QBT user ids. Pass an empty set to remove every assignment for the jobcode.
 export async function reconcile_jobcode_assignments(
@@ -32,19 +26,19 @@ export async function reconcile_jobcode_assignments(
     jobcode_id: number,
     desired_user_ids: Set<number>
 ): Promise<void> {
-    const actual = new Map<pair_key, number>(); // pair_key → assignment id
+    const actual = new Map<number, number>(); // user_id → assignment id
     let page = 1;
     while (true) {
         const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ jobcode_ids: [jobcode_id], page });
         for (const a of assignments) {
-            if (a.active) actual.set(pair(a.user_id, a.jobcode_id), a.id);
+            if (a.active) actual.set(a.user_id, a.id);
         }
         if (!more) break;
         page++;
     }
 
     for (const user_id of desired_user_ids) {
-        if (!actual.has(pair(user_id, jobcode_id))) {
+        if (!actual.has(user_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
             } catch (err) {
@@ -53,13 +47,12 @@ export async function reconcile_jobcode_assignments(
         }
     }
 
-    for (const [key, asgn_id] of actual) {
-        const user_id = Number(key.split(":")[0]);
+    for (const [user_id, asgn_id] of actual) {
         if (!desired_user_ids.has(user_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
             } catch (err) {
-                console.error(`[assignments] Failed to delete assignment ${key}:`, err);
+                console.error(`[assignments] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -72,19 +65,19 @@ export async function reconcile_user_assignments(
     user_id: number,
     desired_jobcode_ids: Set<number>
 ): Promise<void> {
-    const actual = new Map<pair_key, number>(); // pair_key → assignment id
+    const actual = new Map<number, number>(); // jobcode_id → assignment id
     let page = 1;
     while (true) {
         const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ user_ids: [user_id], page });
         for (const a of assignments) {
-            if (a.active) actual.set(pair(a.user_id, a.jobcode_id), a.id);
+            if (a.active) actual.set(a.jobcode_id, a.id);
         }
         if (!more) break;
         page++;
     }
 
     for (const jobcode_id of desired_jobcode_ids) {
-        if (!actual.has(pair(user_id, jobcode_id))) {
+        if (!actual.has(jobcode_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
             } catch (err) {
@@ -93,13 +86,12 @@ export async function reconcile_user_assignments(
         }
     }
 
-    for (const [key, asgn_id] of actual) {
-        const jobcode_id = Number(key.split(":")[1]);
+    for (const [jobcode_id, asgn_id] of actual) {
         if (!desired_jobcode_ids.has(jobcode_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
             } catch (err) {
-                console.error(`[assignments] Failed to delete assignment ${key}:`, err);
+                console.error(`[assignments] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
