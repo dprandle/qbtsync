@@ -6,7 +6,7 @@ export type timesheet_sync_state = {
     full_import_complete: boolean;
     last_synced: Date | null; // inbound cursor: QBT modified_since
     full_import_page: number;
-    outbound_last_synced: Date | null; // outbound cursor: time_records updated_at
+    outbound_last_synced: Date | null; // outbound cursor: time_records last_update.on
 };
 
 export type user_sync_state = {

@@ -2,3 +2,4 @@ node_modules/
 dist/
 .env
 sync_state.json
+.emacs

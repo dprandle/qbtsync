@@ -45,9 +45,10 @@ function dates_approx_equal(a: Date, b: string): boolean {
     return Math.abs(a.getTime() - new Date(b).getTime()) < 1000;
 }
 
-// Returns true if the timesheet was processed (or is already up to date), false if
-// it was skipped because the QBT user/jobcode is not mapped yet and should be retried.
-async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boolean> {
+// Ingests a single inbound QBT timesheet into our time_records. Returns true if it
+// was ingested (or is already up to date), false if it was skipped because the QBT
+// user/jobcode is not mapped yet and should be retried on a later pass.
+async function ingest_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boolean> {
     const map_col = mongo.get_qbt_map_objects();
     const incoming_modified = new Date(ts.last_modified);
 
@@ -58,33 +59,38 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
             return true; // already up to date
         }
 
-        const rec = await mongo.get_trecs().findOne({ _id: mapping.our_id });
-        if (!rec) {
-            // Mapping exists but record is gone — just update qbt_modified
+        const trec = await mongo.get_trecs().findOne({ _id: mapping.our_id });
+        if (!trec) {
+            // Mapping exists but time_record is gone — just advance the bookkeeping fields
             await map_col.updateOne(
                 { type: "timesheet", qbt_id: ts.id },
-                { $set: { qbt_modified: incoming_modified, our_updated_at: new Date() } }
+                { $set: { qbt_modified: incoming_modified, last_update: { by: QBT_UPDATE_BY, on: new Date() } } }
             );
             return true;
         }
 
         const changed =
-            ts.notes !== rec.notes ||
-            !dates_approx_equal(rec.start, ts.start) ||
-            !dates_approx_equal(rec.end, ts.end) ||
-            !dates_approx_equal(rec.date, ts.date);
+            ts.notes !== trec.notes ||
+            !dates_approx_equal(trec.start, ts.start) ||
+            !dates_approx_equal(trec.end, ts.end) ||
+            !dates_approx_equal(trec.date, ts.date);
 
         if (changed) {
             // QBT-side change detected; our time_record is authoritative — push it back
             const reverted = await qbt.update_timesheet(ts.id, {
-                notes: rec.notes,
-                start: rec.start.toISOString(),
-                end: rec.end.toISOString(),
-                date: rec.date.toISOString().slice(0, 10),
+                notes: trec.notes,
+                start: trec.start.toISOString(),
+                end: trec.end.toISOString(),
+                date: trec.date.toISOString().slice(0, 10),
             });
             await map_col.updateOne(
                 { type: "timesheet", qbt_id: ts.id },
-                { $set: { qbt_modified: new Date(reverted.last_modified), our_updated_at: new Date() } }
+                {
+                    $set: {
+                        qbt_modified: new Date(reverted.last_modified),
+                        last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                    },
+                }
             );
         } else {
             // Values match; just advance the modification cursor
@@ -109,9 +115,9 @@ async function upsert_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
             return false;
         }
 
-        const rec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
-        await mongo.get_trecs().insertOne(rec);
-        const map_obj = create_qbt_object_map_item(ts.id, rec._id, "timesheet", incoming_modified);
+        const trec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
+        await mongo.get_trecs().insertOne(trec);
+        const map_obj = create_qbt_object_map_item(ts.id, trec._id, "timesheet", incoming_modified);
         await map_col.insertOne(map_obj);
         return true;
     }
@@ -125,7 +131,7 @@ async function process_inbound_page(
     let { latest_resolved, earliest_unresolved } = progress;
     for (const ts of timesheets) {
         const mod = new Date(ts.last_modified);
-        const resolved = await upsert_timesheet(ts, qbt);
+        const resolved = await ingest_timesheet(ts, qbt);
         if (resolved) {
             if (mod > latest_resolved) latest_resolved = mod;
         } else if (!earliest_unresolved || mod < earliest_unresolved) {
@@ -189,81 +195,100 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     }
 }
 
+// Pushes a single outbound time_record to QBT. Returns true if it was handled
+// (pushed, created, or intentionally nothing-to-do), false if it was skipped
+// because its QBT user/jobcode mappings don't exist yet and it should be retried.
+async function push_time_record(trec: time_record, qbt: qbt_client): Promise<boolean> {
+    const map_col = mongo.get_qbt_map_objects();
+    const mapping = await map_col.findOne({ type: "timesheet", our_id: trec._id });
+
+    if (mapping) {
+        if (trec.last_update.by !== QBT_UPDATE_BY) {
+            // Desktop-originated edit — push to QBT
+            const timesheet = await qbt.update_timesheet(mapping.qbt_id, {
+                notes: trec.notes,
+                start: trec.start.toISOString(),
+                end: trec.end.toISOString(),
+                date: trec.date.toISOString().slice(0, 10),
+            });
+            await map_col.updateOne(
+                { type: "timesheet", our_id: trec._id },
+                {
+                    $set: {
+                        qbt_modified: new Date(timesheet.last_modified),
+                        last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                    },
+                }
+            );
+            console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+        }
+        return true;
+    }
+
+    // No mapping: time_record was created directly in UberMail.
+    // An incomplete record can never be created in QBT; treat it as done so the
+    // cursor isn't stalled — it will reappear if hrid/cont_id are filled in later.
+    if (!trec.hrid || !trec.cont_id) return true;
+
+    // Creating in QBT requires both user and jobcode mappings to exist.
+    const user_map = await map_col.findOne({ type: "user", our_id: trec.hrid });
+    const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: trec.cont_id });
+    if (!user_map || !jobcode_map) {
+        // Not synced yet; retry on a later pass after the user/jobcode syncs run.
+        return false;
+    }
+
+    const timesheet = await qbt.create_timesheet({
+        user_id: user_map.qbt_id,
+        jobcode_id: jobcode_map.qbt_id,
+        start: trec.start.toISOString(),
+        end: trec.end.toISOString(),
+        date: trec.date.toISOString().slice(0, 10),
+        type: "regular",
+        notes: trec.notes,
+    });
+    const map_obj = create_qbt_object_map_item(timesheet.id, trec._id, "timesheet", new Date(timesheet.last_modified));
+    await map_col.insertOne(map_obj);
+    console.log(`[timesheets] Created QBT timesheet ${timesheet.id} for time_record ${trec._id}`);
+    return true;
+}
+
 export async function outbound_sync(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     const since = state.timesheets.outbound_last_synced ?? new Date(0);
 
-    const candidates = await mongo
+    const changed = await mongo
         .get_trecs()
-        .find({ updated_at: { $gt: since } })
+        .find({ "last_update.on": { $gt: since } })
         .toArray();
 
-    if (candidates.length === 0) return;
+    if (changed.length === 0) return;
 
-    console.log(`[timesheets] Outbound sync: ${candidates.length} candidate(s)`);
+    console.log(`[timesheets] Outbound sync: ${changed.length} candidate(s)`);
 
-    const map_col = mongo.get_qbt_map_objects();
-    let latest_updated = since;
-
-    for (const rec of candidates) {
+    const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
+    for (const trec of changed) {
+        const at = trec.last_update.on;
         try {
-            const mapping = await map_col.findOne({ type: "timesheet", our_id: rec._id });
-
-            if (mapping) {
-                if (rec.last_update.by !== QBT_UPDATE_BY) {
-                    // Desktop-originated edit — push to QBT
-                    const updated = await qbt.update_timesheet(mapping.qbt_id, {
-                        notes: rec.notes,
-                        start: rec.start.toISOString(),
-                        end: rec.end.toISOString(),
-                        date: rec.date.toISOString().slice(0, 10),
-                    });
-                    const now = new Date();
-                    await map_col.updateOne(
-                        { type: "timesheet", our_id: rec._id },
-                        { $set: { qbt_modified: new Date(updated.last_modified), our_updated_at: now } }
-                    );
-                    console.log(`[timesheets] Pushed edit for time_record ${rec._id} to QBT id ${mapping.qbt_id}`);
-                }
-            } else {
-                // No mapping: time_record was created directly in UberMail
-                // Requires both user and jobcode mappings to exist in QBT
-                if (!rec.hrid || !rec.cont_id) continue;
-
-                const user_map = await map_col.findOne({ type: "user", our_id: rec.hrid });
-                const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: rec.cont_id });
-
-                if (!user_map || !jobcode_map) {
-                    // Not synced yet; will retry on next pass after user/jobcode syncs run
-                    continue;
-                }
-
-                const created = await qbt.create_timesheet({
-                    user_id: user_map.qbt_id,
-                    jobcode_id: jobcode_map.qbt_id,
-                    start: rec.start.toISOString(),
-                    end: rec.end.toISOString(),
-                    date: rec.date.toISOString().slice(0, 10),
-                    type: "regular",
-                    notes: rec.notes,
-                });
-                const map_obj = create_qbt_object_map_item(
-                    created.id,
-                    rec._id,
-                    "timesheet",
-                    new Date(created.last_modified)
-                );
-                await map_col.insertOne(map_obj);
-                console.log(`[timesheets] Created QBT timesheet ${created.id} for time_record ${rec._id}`);
+            const resolved = await push_time_record(trec, qbt);
+            if (resolved) {
+                if (at > progress.latest_resolved) progress.latest_resolved = at;
+            } else if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
+                progress.earliest_unresolved = at;
             }
         } catch (err) {
-            console.error(`[timesheets] Outbound error for time_record ${rec._id}:`, err);
+            console.error(`[timesheets] Outbound error for time_record ${trec._id}:`, err);
+            if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
+                progress.earliest_unresolved = at;
+            }
         }
-
-        if (rec.last_update.on > latest_updated) latest_updated = rec.last_update.on;
     }
 
-    if (latest_updated > since) {
-        save_timesheet_state({ outbound_last_synced: latest_updated });
+    const latest = safe_cursor(progress, since);
+    if (latest > since) {
+        save_timesheet_state({ outbound_last_synced: latest });
+        console.log(`[timesheets] Outbound cursor advanced to ${latest.toISOString()}`);
+    } else {
+        console.log("[timesheets] No outbound changes.");
     }
 }
