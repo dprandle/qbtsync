@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { randomUUID } from "crypto";
-import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor } from "./sync_state";
+import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME, is_active } from "./uobj_common";
@@ -175,7 +175,7 @@ export async function full_import(qbt: qbt_client): Promise<void> {
     ilog("[ts] Starting full import...");
     const state = get_sync_state();
     let page = state.timesheets.full_import_page;
-    const since = state.timesheets.last_synced ?? new Date(0);
+    const since = state.timesheets.last_synced ?? CURSOR_EPOCH;
     let progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
 
     while (true) {
@@ -198,7 +198,7 @@ export async function full_import(qbt: qbt_client): Promise<void> {
 
 export async function incremental_sync(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
-    const modified_since = state.timesheets.last_synced ?? new Date(0);
+    const modified_since = state.timesheets.last_synced ?? CURSOR_EPOCH;
 
     ilog(`[ts] Inbound sync since ${modified_since.toISOString()}`);
 
@@ -304,7 +304,7 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
 
 export async function outbound_sync(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
-    const since = state.timesheets.outbound_last_synced ?? new Date(0);
+    const since = state.timesheets.outbound_last_synced ?? CURSOR_EPOCH;
 
     const changed = await mongo
         .get_trecs()

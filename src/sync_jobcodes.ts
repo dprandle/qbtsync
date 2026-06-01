@@ -1,5 +1,5 @@
 import mongo from "./db";
-import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor } from "./sync_state";
+import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
@@ -227,7 +227,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
 
 export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
-    const since = state.jobcodes.last_synced ?? new Date(0);
+    const since = state.jobcodes.last_synced ?? CURSOR_EPOCH;
     ilog(`[jc] Delta sync since ${since.toISOString()}`);
 
     const changed = await mongo

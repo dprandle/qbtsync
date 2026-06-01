@@ -122,6 +122,8 @@ export function save_jobcode_state(update: Partial<jobcode_sync_state>): void {
 // Tracks per-item sync progress so the cursor only advances past items that
 // were actually resolved. `earliest_unresolved` floors the cursor at one ms
 // before the earliest skipped/failed item, guaranteeing it gets re-fetched.
+export const CURSOR_EPOCH = new Date(0); // default "sync from the beginning" cursor floor
+
 export type cursor_progress = {
     latest_resolved: Date;
     earliest_unresolved: Date | null;

@@ -1,5 +1,5 @@
 import mongo from "./db";
-import { save_user_state, get_sync_state, cursor_progress, safe_cursor } from "./sync_state";
+import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
@@ -196,7 +196,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
 
 export async function sync_users(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
-    const since = state.users.last_synced ?? new Date(0);
+    const since = state.users.last_synced ?? CURSOR_EPOCH;
     ilog(`[usi] Delta sync since ${since.toISOString()}`);
 
     // Query hresources modified since the cursor
