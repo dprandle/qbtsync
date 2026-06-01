@@ -1,9 +1,10 @@
 import mongo from "./db";
-import { save_user_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
+import { save_user_state, get_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
+import { ask_yes_no } from "./util";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
@@ -25,7 +26,11 @@ function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
 }
 
 function get_hres_log_str(hr: hresource_doc): string {
-    return `${hr.last_name}, ${hr.first_name} (${hr.email} - ${hr._id})`;
+    return `${hr.last_name}, ${hr.first_name} (${hr.email}:${hr._id})`;
+}
+
+function get_user_log_str(usr: qbt_user): string {
+    return `${usr.last_name}, ${usr.first_name} (${usr.email}:${usr.id})`;
 }
 
 function normalize_email(s: string): string {
@@ -44,9 +49,10 @@ async function bootstrap_users_loop(
     qbt: qbt_client,
     hres_by_email: Map<string, hresource_doc>,
     active: active_param
-): Promise<void> {
+): Promise<qbt_user[]> {
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
+    let nomatches: qbt_user[] = [];
     while (true) {
         const { items: users, more } = await qbt.fetch_users({ page, active });
         for (const qusr of users) {
@@ -60,7 +66,7 @@ async function bootstrap_users_loop(
             let hres = hres_by_email.get(normalized_usr_email);
             if (!hres) hres = hres_by_email.get(normalized_username);
             if (!hres) {
-                ilog("[usi] Could not find matching hres for tsuser:", qusr);
+                nomatches.push(qusr);
                 continue;
             }
 
@@ -74,25 +80,37 @@ async function bootstrap_users_loop(
 
             const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
             await map_col.insertOne(map_obj);
-            ilog(
-                `[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${qusr.id} (${qusr.email})`
-            );
+            ilog(`[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${get_user_log_str(qusr)}`);
         }
         if (!more) break;
         page++;
     }
+    return nomatches;
 }
 
 export async function bootstrap_users(qbt: qbt_client): Promise<void> {
-    if (load_sync_state().users.bootstrap_complete) return;
+    if (get_sync_state().users.bootstrap_complete) return;
     ilog("[usi] Running bootstrap: matching QBT users to hresources by email...");
     const all_hres = await mongo.get_hres().find({}).toArray();
 
     // Create faster lookup table
     const hres_by_email = new Map(all_hres.map((h) => [normalize_email(h.email), h]));
     // Do active users first, then non active users as we want our active ones to take priority
-    await bootstrap_users_loop(qbt, hres_by_email, "yes");
-    await bootstrap_users_loop(qbt, hres_by_email, "no");
+    const active_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "yes");
+    const archived_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "no");
+    for (const u of archived_nomatches) {
+        ilog(`[usi] Could not find matching hres for archived tsuser ${get_user_log_str(u)}`);
+    }
+
+    for (const u of active_nomatches) {
+        ilog(`[usi] Could not find matching hres for active tsuser ${get_user_log_str(u)}`);
+        const answer = await ask_yes_no("Would you like to archive this user?");
+        if (answer) {
+            const result = await qbt.update_user(u.id, {active: false});
+            ilog(`[usi] Updated user ${get_user_log_str(result)} to ${result.active ? "active" : "archived"}`);
+        }
+    }
+    
     save_user_state({ bootstrap_complete: true });
     ilog("[usi] Bootstrap complete.");
 }
@@ -172,7 +190,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
 }
 
 export async function sync_users(qbt: qbt_client): Promise<void> {
-    const state = load_sync_state();
+    const state = get_sync_state();
     const since = state.users.last_synced ?? new Date(0);
     ilog(`[usi] Delta sync since ${since.toISOString()}`);
 

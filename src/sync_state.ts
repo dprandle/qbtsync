@@ -70,16 +70,25 @@ function parse_dates(state: any): sync_state {
     };
 }
 
-export function load_sync_state(): sync_state {
+// Single in-memory copy of the state, read from disk on first access and kept
+// in sync with every save. Avoids re-reading the file on each load/save.
+let cached_state: sync_state | null = null;
+
+function read_from_disk(): sync_state {
     if (!existsSync(STATE_FILE)) {
         if (!logged_fresh_state) {
             ilog(`[sync_state] No state file at ${resolve(STATE_FILE)} — starting from a fresh sync state.`);
             logged_fresh_state = true;
         }
-        return { ...default_state };
+        return structuredClone(default_state);
     }
     const raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
     return parse_dates(raw);
+}
+
+export function get_sync_state(): sync_state {
+    if (!cached_state) cached_state = read_from_disk();
+    return cached_state;
 }
 
 function write_state(state: sync_state): void {
@@ -87,19 +96,19 @@ function write_state(state: sync_state): void {
 }
 
 export function save_timesheet_state(update: Partial<timesheet_sync_state>): void {
-    const state = load_sync_state();
+    const state = get_sync_state();
     state.timesheets = { ...state.timesheets, ...update };
     write_state(state);
 }
 
 export function save_user_state(update: Partial<user_sync_state>): void {
-    const state = load_sync_state();
+    const state = get_sync_state();
     state.users = { ...state.users, ...update };
     write_state(state);
 }
 
 export function save_jobcode_state(update: Partial<jobcode_sync_state>): void {
-    const state = load_sync_state();
+    const state = get_sync_state();
     state.jobcodes = { ...state.jobcodes, ...update };
     write_state(state);
 }
@@ -122,6 +131,7 @@ export function safe_cursor(progress: cursor_progress, since: Date): Date {
 }
 
 export function reset_sync_state(): void {
+    cached_state = null;
     if (existsSync(STATE_FILE)) {
         unlinkSync(STATE_FILE);
         ilog("[sync_state] Sync state reset.");

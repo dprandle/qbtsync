@@ -1,7 +1,7 @@
 import "./global_setup"
 import { config } from "./config";
 import mongo from "./db";
-import { load_sync_state, reset_sync_state } from "./sync_state";
+import { get_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users, bootstrap_users } from "./sync_users";
 import { sync_jobcodes, bootstrap_jobcodes } from "./sync_jobcodes";
@@ -78,14 +78,7 @@ async function main(): Promise<void> {
         ilog("[startup] Running bootstraps before any sync...");
         await Promise.all([bootstrap_users(qbt), bootstrap_jobcodes(qbt)]);
 
-        // Time records reverse-map each QBT timesheet's user/jobcode through
-        // qbt_object_map, so those mappings must exist before the timesheet
-        // import runs. Sync users and jobcodes first, then do the full timesheet
-        // import, then start all the periodic loops.
-        ilog("[startup] Syncing users and jobcodes before timesheets...");
-        await Promise.all([sync_users(qbt), sync_jobcodes(qbt)]);
-
-        const state = load_sync_state();
+        const state = get_sync_state();
         if (force_full_import || !state.timesheets.full_import_complete) {
             await full_import(qbt);
         }
