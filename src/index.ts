@@ -29,27 +29,22 @@ async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
     }
 }
 
-async function run_user_loop(qbt: qbt_client): Promise<void> {
-    ilog(`[usi] Starting sync loop (interval: ${config.user_sync_interval_ms}ms)`);
+// Users and jobcodes run in a single sequential pass rather than as concurrent
+// loops. They share the qbt object map and reconcile the same jobcode-assignment
+// records from opposite directions, so running them one at a time keeps that
+// shared state deterministic and avoids interleaving races. User changes
+// (archive, time-tracking toggle) only bump the hresource doc, so user-side
+// reconciliation is still required alongside the jobcode-side pass.
+async function run_entity_loop(qbt: qbt_client): Promise<void> {
+    ilog(`[entity] Starting users+jobcodes sync loop (interval: ${config.entity_sync_interval_ms}ms)`);
     while (true) {
         try {
             await sync_users(qbt);
-        } catch (err) {
-            elog("[usi] Loop error:", err);
-        }
-        await sleep(config.user_sync_interval_ms);
-    }
-}
-
-async function run_jobcode_loop(qbt: qbt_client): Promise<void> {
-    ilog(`[jc] Starting sync loop (interval: ${config.jobcode_sync_interval_ms}ms)`);
-    while (true) {
-        try {
             await sync_jobcodes(qbt);
         } catch (err) {
-            elog("[jc] Loop error:", err);
+            elog("[entity] Loop error:", err);
         }
-        await sleep(config.jobcode_sync_interval_ms);
+        await sleep(config.entity_sync_interval_ms);
     }
 }
 
@@ -90,9 +85,8 @@ async function main(): Promise<void> {
 
         ilog("[startup] Initial sync complete — starting periodic loops.");
         await Promise.all([
-            //run_timesheet_loop(qbt),
-            run_user_loop(qbt),
-            run_jobcode_loop(qbt),
+            run_timesheet_loop(qbt),
+            run_entity_loop(qbt),
         ]);
     } finally {
         await mongo.disconnect();
