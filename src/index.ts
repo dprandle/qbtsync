@@ -1,7 +1,7 @@
 import "./global_setup"
 import { config } from "./config";
 import mongo from "./db";
-import { get_sync_state, reset_sync_state } from "./sync_state";
+import { get_sync_state, reset_sync_state, ensure_state_file_writable } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
 import { sync_users, bootstrap_users } from "./sync_users";
 import { sync_jobcodes, bootstrap_jobcodes } from "./sync_jobcodes";
@@ -54,6 +54,10 @@ async function run_jobcode_loop(qbt: qbt_client): Promise<void> {
 }
 
 async function main(): Promise<void> {
+    // Fail fast if the configured state path can't be created/written, before
+    // we connect to Mongo or run any sync work.
+    ensure_state_file_writable();
+
     if (do_reset) {
         reset_sync_state();
         process.exit(0);

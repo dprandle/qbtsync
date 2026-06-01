@@ -86,7 +86,7 @@ async function bootstrap_jobcodes_loop(
                 qbt_id: jc.id,
             });
             if (existing) {
-                ilog(`Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`);
+                ilog(`[jc] Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`);
                 continue;
             }
 

@@ -20,7 +20,7 @@ async function connect(): Promise<void> {
     await client.connect();
     db = client.db(config.mongo_db_name);
     mock_db = client.db(config.mock_qbt_db_name);
-    ilog(`Connected to MongoDB: ${config.mongo_db_name} (mock: ${config.mock_qbt_db_name})`);
+    ilog(`[startup] Connected to MongoDB: ${config.mongo_db_name} (mock: ${config.mock_qbt_db_name})`);
 
     await get_qbt_map_objects().createIndex({ type: 1, qbt_id: 1 }, { unique: true });
     await get_qbt_map_objects().createIndex({ type: 1, our_id: 1 }, { unique: true });

@@ -1,12 +1,8 @@
-import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
-import { resolve } from "path";
+import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "fs";
+import { resolve, dirname } from "path";
 import { config } from "./config";
 
 const STATE_FILE = config.sync_state_file;
-
-// Guards the "starting fresh" log so it fires once per process rather than on
-// every load (load_sync_state runs before each save, before the file exists).
-let logged_fresh_state = false;
 
 export type timesheet_sync_state = {
     full_import_complete: boolean;
@@ -76,14 +72,24 @@ let cached_state: sync_state | null = null;
 
 function read_from_disk(): sync_state {
     if (!existsSync(STATE_FILE)) {
-        if (!logged_fresh_state) {
-            ilog(`[sync_state] No state file at ${resolve(STATE_FILE)} — starting from a fresh sync state.`);
-            logged_fresh_state = true;
-        }
         return structuredClone(default_state);
     }
     const raw = JSON.parse(readFileSync(STATE_FILE, "utf-8"));
     return parse_dates(raw);
+}
+
+// Verify up front that the state file (and any parent dirs) can be created and
+// written, so a misconfigured SYNC_STATE_FILE fails at startup rather than deep
+// into a run on the first save. Seeds a fresh file with the default state when
+// none exists; otherwise rewrites the current state to confirm writability now.
+export function ensure_state_file_writable(): void {
+    mkdirSync(dirname(resolve(STATE_FILE)), { recursive: true });
+    if (!existsSync(STATE_FILE)) {
+        write_state(default_state);
+        ilog(`[sync_state] Created fresh state file at ${resolve(STATE_FILE)}.`);
+    } else {
+        write_state(get_sync_state());
+    }
 }
 
 export function get_sync_state(): sync_state {
