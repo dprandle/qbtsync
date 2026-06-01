@@ -5,12 +5,12 @@
   "main": "dist/index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec ts-node src/index.ts",
-    "seed_mock_db": "ts-node src/seed_mock_db.ts",
-    "start": "node dist/index.js",
-    "migrate": "ts-node src/index.ts --full-import",
-    "reset": "ts-node src/index.ts --reset",
-    "wipe": "ts-node src/index.ts --reset"
+    "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+    "seed_mock_db": "npm run build && node dist/seed_mock_db.js",
+    "start": "npm run build && node dist/index.js",
+    "migrate": "npm run build && node dist/index.js --full-import",
+    "reset": "npm run build && node dist/index.js --reset",
+    "wipe": "npm run build && node dist/index.js --reset"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
