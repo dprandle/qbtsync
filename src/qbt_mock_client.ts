@@ -21,11 +21,7 @@ const PAGE_SIZE = 100;
 
 // Mock storage uses the QBT `id` directly as Mongo's `_id`. These helpers map
 // between the wire shape (`id: number`) and the stored shape (`_id: number`).
-type allowed_types =
-| qbt_timesheet
-| qbt_jobcode
-| qbt_user
-| qbt_jobcode_assignment;
+type allowed_types = qbt_timesheet | qbt_jobcode | qbt_user | qbt_jobcode_assignment;
 
 type mock_doc<T extends allowed_types> = Omit<T, "id"> & { _id: number };
 
@@ -60,6 +56,7 @@ export class qbt_mock_client implements qbt_client {
         const col = mongo.get_mock_timesheets();
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
+        filter["on_the_clock"] = "both";
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         } else if (!opts.ids?.length) {
@@ -87,15 +84,11 @@ export class qbt_mock_client implements qbt_client {
             jobcode_id: d.jobcode_id,
             start: d.start,
             end: d.end,
-            duration: 0,
             date: d.date,
-            type: d.type,
-            active: true,
-            locked: 0,
             notes: d.notes,
+            location: d.location,
+            on_the_clock: d.on_the_clock,
             last_modified: now_iso(),
-            tz: "America/New_York",
-            customfields: {},
         };
         await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts));
         return ts;
@@ -185,10 +178,10 @@ export class qbt_mock_client implements qbt_client {
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
         const jc: qbt_jobcode = {
             id: next_mock_id(),
-            parent_id: 0,
             name: d.name,
             active: true,
             last_modified: now_iso(),
+            created: now_iso(),
         };
         await mongo.get_mock_jobcodes().insertOne(to_mock_doc(jc));
         return jc;

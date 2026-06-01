@@ -101,7 +101,7 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
     console.log("[users] Bootstrap complete.");
 }
 
-async function sync_hres(hres: hresource_doc, qbt: qbt_client): Promise<void> {
+async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_qbt_user(hres.tt_flags, hres.archived_info.on);
     const mapping = await map_col.findOne({ type: "user", our_id: hres._id });
@@ -192,7 +192,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     for (const hres of changed) {
         const at = hres.last_update.on;
         try {
-            await sync_hres(hres, qbt);
+            await process_hres_update(hres, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
             console.error(`[users] Error syncing hres ${hres._id}:`, err);

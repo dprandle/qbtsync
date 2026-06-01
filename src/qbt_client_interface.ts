@@ -55,16 +55,6 @@ export type fetch_assignments_opts = {
 
 export type fetch_assignments_result = fetch_items_result<qbt_jobcode_assignment>;
 
-export type timesheet_write_data = {
-    user_id: number;
-    jobcode_id: number;
-    start: string;
-    end: string;
-    date: string;
-    type: "regular" | "pto";
-    notes: string;
-};
-
 // QuickBooks Time API types
 export type qbt_user = {
     id: number;
@@ -89,17 +79,16 @@ export type qbt_timesheet = {
     id: number;
     user_id: number;
     jobcode_id: number;
+    notes: string;
     start: string; // ISO 8601
     end: string; // ISO 8601
-    duration: number; // seconds
     date: string; // YYYY-MM-DD
-    tz: number;
-    tz_str: string;
     location: string;
     on_the_clock: boolean;
-    notes: string;
     last_modified: string; // ISO 8601    
 };
+
+export type timesheet_write_data = Omit<qbt_timesheet, "id" | "last_modified">;
 
 export type qbt_timesheets_response = {
     results: {

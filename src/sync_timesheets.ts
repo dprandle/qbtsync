@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import { save_timesheet_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
-import { INVALID_DATETIME } from "./uobj_common";
+import { INVALID_DATETIME, is_active } from "./uobj_common";
 import { change_info } from "./uobj_common";
 import { contract_route_doc } from "./sync_jobcodes";
 const TIME_RECORD_SCHEMA_VERSION = 1;
@@ -225,32 +225,44 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     }
 }
 
-// Pushes a single outbound time_record to QBT. Returns true if it was handled
+// Processes a time_record and updates QBT with time record info. Returns true if it was handled
 // (pushed, created, or intentionally nothing-to-do), false if it was skipped
 // because its QBT user/jobcode mappings don't exist yet and it should be retried.
-async function push_time_record(trec: time_record, qbt: qbt_client): Promise<boolean> {
+async function process_time_record_update(trec: time_record, qbt: qbt_client): Promise<boolean> {
     const map_col = mongo.get_qbt_map_objects();
     const mapping = await map_col.findOne({ type: "timesheet", our_id: trec._id });
+    const on_the_clock = trec.end.getTime() === INVALID_DATETIME.getTime();
+
+    // A jobcode can be changed in uber, but not an employee
+    const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: trec.cont_id });
 
     if (mapping) {
         if (trec.last_update.by !== QBT_UPDATE_BY) {
-            // Desktop-originated edit — push to QBT
-            const timesheet = await qbt.update_timesheet(mapping.qbt_id, {
-                notes: trec.notes,
-                start: trec.start.toISOString(),
-                end: trec.end.toISOString(),
-                date: trec.date.toISOString().slice(0, 10),
-            });
-            await map_col.updateOne(
-                { type: "timesheet", our_id: trec._id },
-                {
-                    $set: {
-                        qbt_modified: new Date(timesheet.last_modified),
-                        last_update: { by: QBT_UPDATE_BY, on: new Date() },
-                    },
-                }
-            );
-            console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+            if (is_active(trec.archived_info.on)) {
+                // Desktop-originated edit — push to QBT
+                const timesheet = await qbt.update_timesheet(mapping.qbt_id, {
+                    notes: trec.notes,
+                    start: trec.start.toISOString(),
+                    end: on_the_clock ? "" : trec.end.toISOString(),
+                    date: trec.date.toISOString().slice(0, 10),
+                    jobcode_id: jobcode_map?.qbt_id ?? 0,
+                });
+                await map_col.updateOne(
+                    { type: "timesheet", our_id: trec._id },
+                    {
+                        $set: {
+                            qbt_modified: new Date(timesheet.last_modified),
+                            last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                        },
+                    }
+                );
+                console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+            }
+            else {
+                
+                console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+                
+            }
         }
         return true;
     }
@@ -262,7 +274,6 @@ async function push_time_record(trec: time_record, qbt: qbt_client): Promise<boo
 
     // Creating in QBT requires both user and jobcode mappings to exist.
     const user_map = await map_col.findOne({ type: "user", our_id: trec.hrid });
-    const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: trec.cont_id });
     if (!user_map || !jobcode_map) {
         // Not synced yet; retry on a later pass after the user/jobcode syncs run.
         return false;
@@ -272,10 +283,11 @@ async function push_time_record(trec: time_record, qbt: qbt_client): Promise<boo
         user_id: user_map.qbt_id,
         jobcode_id: jobcode_map.qbt_id,
         start: trec.start.toISOString(),
-        end: trec.end.toISOString(),
+        end: on_the_clock ? "" : trec.end.toISOString(),
         date: trec.date.toISOString().slice(0, 10),
-        type: "regular",
         notes: trec.notes,
+        location: QBT_UPDATE_BY,
+        on_the_clock,
     });
     const map_obj = create_qbt_object_map_item(timesheet.id, trec._id, "timesheet", new Date(timesheet.last_modified));
     await map_col.insertOne(map_obj);
@@ -300,7 +312,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
     for (const trec of changed) {
         const at = trec.last_update.on;
         try {
-            const resolved = await push_time_record(trec, qbt);
+            const resolved = await process_time_record_update(trec, qbt);
             if (resolved) {
                 if (at > progress.latest_resolved) progress.latest_resolved = at;
             } else if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {

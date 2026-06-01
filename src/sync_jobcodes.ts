@@ -121,7 +121,7 @@ async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     console.log("[jobcodes] Bootstrap complete.");
 }
 
-async function sync_contract(cont: contract_route_doc, qbt: qbt_client): Promise<void> {
+async function process_contract_update(cont: contract_route_doc, qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_active_qbt_jobcode(cont);
     const cur_rname = get_current_route_name(cont);
@@ -198,7 +198,7 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     for (const cont of changed) {
         const at = cont.last_update.on;
         try {
-            await sync_contract(cont, qbt);
+            await process_contract_update(cont, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
             console.error(`[jobcodes] Error syncing contract ${cont._id}:`, err);
