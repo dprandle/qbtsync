@@ -1,3 +1,5 @@
+import "./global_setup"
+import { config } from "./config";
 import mongo from "./db";
 import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
@@ -6,7 +8,6 @@ import { sync_jobcodes } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
-import { config } from "./config";
 
 const force_full_import = process.argv.includes("--full-import");
 const do_reset = process.argv.includes("--reset");
