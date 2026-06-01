@@ -179,7 +179,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
 
     // Find awarded+active contracts where this hres is linked under an employee role.
     const role_filters = [...EMP_ROLE_KEYS].map((role) => ({
-        [`assignments.${role}.emp_id.source_str`]: hres._id,
+        [`assignments.${role}.emp_id`]: hres._id,
     }));
     const contracts = await mongo.get_conts().find({ $or: role_filters }).toArray();
     const cont_ids = contracts.filter((c) => is_active(c.archived_info.on) && is_awarded(c)).map((c) => c._id);

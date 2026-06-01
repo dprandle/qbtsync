@@ -90,7 +90,7 @@ async function main(): Promise<void> {
 
         ilog("[startup] Initial sync complete — starting periodic loops.");
         await Promise.all([
-            run_timesheet_loop(qbt),
+            //run_timesheet_loop(qbt),
             run_user_loop(qbt),
             run_jobcode_loop(qbt),
         ]);

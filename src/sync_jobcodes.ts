@@ -12,8 +12,7 @@ function emp_hres_ids(cont: contract_route_doc): Set<string> {
     for (const [role_key, links] of Object.entries(cont.assignments)) {
         if (!EMP_ROLE_KEYS.has(role_key)) continue;
         for (const link of links) {
-            const src = link.emp_id?.source_str;
-            if (src) ids.add(src);
+            if (link.emp_id) ids.add(link.emp_id);
         }
     }
     return ids;
@@ -21,12 +20,8 @@ function emp_hres_ids(cont: contract_route_doc): Set<string> {
 
 type byte = number;
 
-type uid = {
-    source_str: string;
-};
-
 type crole_link = {
-    emp_id: uid;
+    emp_id: string;
 };
 
 export type contract_route_doc = {
