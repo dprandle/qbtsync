@@ -134,9 +134,14 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     if (mapping) {
         jci = await qbt.fetch_jobcode(mapping.qbt_id);
         const updates: Partial<qbt_jobcode> = {};
-        if (want && !jci.active) updates.active = true;
-        if (!want && jci.active) updates.active = false;
-        if (cont.route_num && jci.name !== cont.route_num) updates.name = cont.route_num;
+        // We can only update a jobcode if it is active (besides setting active to true). QBT also allows
+        // other updates on archived jobcodes as long as one of updates is setting the jobcode to active
+        if (want) {
+            if (!jci.active) updates.active = true;
+            if (cont.route_num && jci.name !== cont.route_num) updates.name = cont.route_num;
+        } else if (jci.active) {
+            updates.active = false;
+        }
         if (Object.keys(updates).length > 0) {
             const new_jci = await qbt.update_jobcode(jci.id, updates);
             console.log(

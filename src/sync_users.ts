@@ -72,12 +72,7 @@ async function bootstrap_users_loop(
                 continue;
             }
 
-            const map_obj = create_qbt_object_map_item(
-                qusr.id,
-                hres._id,
-                "user",
-                new Date(qusr.last_modified)
-            );
+            const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
             await map_col.insertOne(map_obj);
             console.log(
                 `[users] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${qusr.id} (${qusr.email})`
@@ -112,13 +107,18 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         const updates: Partial<qbt_user> = {};
         const norm_hr_email = normalize_email(hres.email);
         const norm_hr_phone = normalize_phone_number(hres.phone_number);
-        if (want && !usi.active) updates.active = true;
-        if (!want && usi.active) updates.active = false;
-        if (usi.email != norm_hr_email) updates.email = norm_hr_email;
-        if (usi.username != norm_hr_email) updates.username = norm_hr_email;
-        if (usi.mobile_number != norm_hr_phone) updates.mobile_number = norm_hr_phone;
-        if (usi.first_name != hres.first_name) updates.first_name = hres.first_name;
-        if (usi.last_name != hres.last_name) updates.last_name = hres.last_name;
+        // We can only update a user if they are active (besides setting active to true). QBT also allows
+        // other updates on archived users as long as one of updates is setting the user to active
+        if (want) {
+            if (!usi.active) updates.active = true;
+            if (usi.email !== norm_hr_email) updates.email = norm_hr_email;
+            if (usi.username !== norm_hr_email) updates.username = norm_hr_email;
+            if (usi.mobile_number !== norm_hr_phone) updates.mobile_number = norm_hr_phone;
+            if (usi.first_name !== hres.first_name) updates.first_name = hres.first_name;
+            if (usi.last_name !== hres.last_name) updates.last_name = hres.last_name;
+        } else if (usi.active) {
+            updates.active = false;
+        }
         if (Object.keys(updates).length > 0) {
             const new_usi = await qbt.update_user(usi.id, updates);
             console.log(
