@@ -131,6 +131,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         const updates: Partial<qbt_user> = {};
         const norm_hr_email = normalize_email(hres.email);
         const norm_hr_phone = normalize_phone_number(hres.phone_number);
+
         // We can only update a user if they are active (besides setting active to true). QBT also allows
         // other updates on archived users as long as one of updates is setting the user to active
         if (want) {
@@ -144,19 +145,13 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
             updates.active = false;
         }
         if (Object.keys(updates).length > 0) {
-            const new_usi = await qbt.update_user(usi.id, updates);
-            ilog(
-                `[usi] Updated QBT user`,
-                usi,
-                `for hres ${get_hres_log_str(hres)} with`,
-                updates,
-                "resulting in",
-                new_usi
-            );
-            usi = new_usi;
+            usi = await qbt.update_user(usi.id, updates);
+            ilog(`[usi] Updated user ${get_user_log_str(usi)} with:`, updates);
+        } else {
+            ilog(`[usi] No changes`);
         }
     } else if (want) {
-        // Create a new QBT user for this hresource
+        // Create a new user for this hresource
         const norm_hr_email = normalize_email(hres.email);
         usi = await qbt.create_user({
             username: norm_hr_email,
@@ -167,12 +162,17 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         });
         const map_obj = create_qbt_object_map_item(usi.id, hres._id, "user", new Date(usi.last_modified));
         await map_col.insertOne(map_obj);
-        ilog(`[usi] Created QBT user`, usi, ` for hres ${get_hres_log_str(hres)}`);
+        ilog(`[usi] Created user:`, usi);
+    } else {
+        ilog(`[usi] No changes`);
     }
 
     // Reconcile this user's assignments now that its active state is settled.
     if (!usi) return;
     if (!usi.active) {
+        ilog(
+            `[jca] Starting sync - archiving any assignments for ${get_hres_log_str(hres)} (usi: ${get_user_log_str(usi)})`
+        );
         await reconcile_jc_assignments_by_user(qbt, usi.id, new Set());
         return;
     }
@@ -191,6 +191,9 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids, active: "yes" }));
         jcs.forEach((jc) => desired.add(jc.id));
     }
+    ilog(
+        `[jca] Starting sync - ${desired.size} desired assignments for ${get_hres_log_str(hres)} (usi: ${get_user_log_str(usi)})`
+    );
     await reconcile_jc_assignments_by_user(qbt, usi.id, desired);
 }
 
@@ -206,8 +209,10 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
         .toArray();
 
     const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
-    for (const hres of changed) {
+    for (let i = 0; i < changed.length; ++i) {
+        const hres = changed[i];
         const at = hres.last_update.on;
+        ilog(`[usi] Processing update for ${get_hres_log_str(hres)} (${i + 1} of ${changed.length})`);
         try {
             await process_hres_update(hres, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;

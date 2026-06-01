@@ -35,12 +35,15 @@ export async function reconcile_jc_assignments_by_jobcode(
         if (!more) break;
         page++;
     }
-
+    
+    let create_ops = 0;
+    let delete_ops = 0;
     for (const user_id of desired_user_ids) {
         if (!actual.has(user_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
                 ilog(`[jca] Created jc assignment for ${user_id}:${jobcode_id}`);
+                ++create_ops;
             } catch (err) {
                 elog(`[jca] Failed to create jc assignment ${user_id}:${jobcode_id}:`, err);
             }
@@ -52,11 +55,14 @@ export async function reconcile_jc_assignments_by_jobcode(
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
                 ilog(`[jca] Deleted jc assignment ${user_id}:${jobcode_id}`);
+                ++delete_ops;
             } catch (err) {
                 elog(`[jca] Failed to delete jc assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
+    const txt = create_ops > 0 || delete_ops > 0 ? `created:${create_ops} deleted:${delete_ops}` : "No assignment changes";
+    ilog(`[jca] Finished sync - ${txt}`);
 }
 
 // Reconcile a single QBT user's assignments against the desired set of active QBT
@@ -77,11 +83,14 @@ export async function reconcile_jc_assignments_by_user(
         page++;
     }
 
+    let create_ops = 0;
+    let delete_ops = 0;
     for (const jobcode_id of desired_jobcode_ids) {
         if (!actual.has(jobcode_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
-                ilog(`[jca] Create jc assignment ${user_id}:${jobcode_id}`);
+                ++create_ops;
+                ilog(`[jca] Created jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
                 elog(`[jca] Failed to create assignment ${user_id}:${jobcode_id}:`, err);
             }
@@ -92,10 +101,13 @@ export async function reconcile_jc_assignments_by_user(
         if (!desired_jobcode_ids.has(jobcode_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
-                ilog(`[jca] Deleted jc assignment ${user_id}:${jobcode_id}`);
+                ilog(`[jca] Delete jc assignment ${user_id}:${jobcode_id}`);
+                ++delete_ops;
             } catch (err) {
                 elog(`[jca] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
+    const txt = create_ops > 0 || delete_ops > 0 ? `created:${create_ops} deleted:${delete_ops}` : "No assignment changes";
+    ilog(`[jca] Finished sync - ${txt}`);
 }

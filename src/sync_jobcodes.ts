@@ -172,6 +172,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     if (mapping) {
         jci = await qbt.fetch_jobcode(mapping.qbt_id);
         const updates: Partial<qbt_jobcode> = {};
+
         // We can only update a jobcode if it is active (besides setting active to true). QBT also allows
         // other updates on archived jobcodes as long as one of updates is setting the jobcode to active
         if (want) {
@@ -181,16 +182,10 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
             updates.active = false;
         }
         if (Object.keys(updates).length > 0) {
-            const new_jci = await qbt.update_jobcode(jci.id, updates);
-            ilog(
-                `[jc] Updated QBT jobcode`,
-                jci,
-                `for contract  ${cur_rname} (${cont._id}) with`,
-                updates,
-                "resulting in",
-                new_jci
-            );
-            jci = new_jci;
+            jci = await qbt.update_jobcode(jci.id, updates);
+            ilog(`[jc] Updated jobcode ${get_jobcode_log_str(jci)} with:`, updates);
+        } else {
+            ilog(`[jc] No changes`);
         }
     } else if (want) {
         jci = await qbt.create_jobcode({
@@ -199,12 +194,17 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         });
         const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
         await map_col.insertOne(new_map_obj);
-        ilog(`[jc] Created QBT jobcode`, jci, `for contract  ${cur_rname} (${cont._id})`);
+        ilog(`[jc] Created jobcode:`, jci);
+    } else {
+        ilog(`[jc] No changes`);
     }
 
     // Reconcile this jobcode's assignments now that its active state is settled.
     if (!jci) return;
     if (!jci.active) {
+        ilog(
+            `[jca] Starting sync - archiving any assignments for ${get_contract_log_str(cont)} (jc: ${get_jobcode_log_str(jci)})`
+        );
         await reconcile_jc_assignments_by_jobcode(qbt, jci.id, new Set());
         return;
     }
@@ -217,6 +217,9 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids, active: "yes" }));
         usrs.forEach((u) => desired.add(u.id));
     }
+    ilog(
+        `[jca] Starting sync - ${desired.size} desired assignments for ${get_contract_log_str(cont)} (jc: ${get_jobcode_log_str(jci)})`
+    );
     await reconcile_jc_assignments_by_jobcode(qbt, jci.id, desired);
 }
 
@@ -231,8 +234,10 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
         .toArray();
 
     const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
-    for (const cont of changed) {
+    for (let i = 0; i < changed.length; ++i) {
+        const cont = changed[i];
         const at = cont.last_update.on;
+        ilog(`[jc] Processing update for ${get_contract_log_str(cont)} (${i + 1} of ${changed.length})`);
         try {
             await process_contract_update(cont, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
