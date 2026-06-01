@@ -1,3 +1,4 @@
+import "./global_setup"
 import mongo from "./db";
 import { qbt_api_client } from "./qbt_client";
 import { to_mock_doc } from "./qbt_mock_client";
