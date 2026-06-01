@@ -129,6 +129,10 @@ export class qbt_api_client implements qbt_client {
         return Object.values(data.results.timesheets)[0];
     }
 
+    async delete_timesheet(id: number): Promise<void> {
+        await qbt_delete("/timesheets", { ids: String(id) });
+    }
+
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
         const params: Record<string, string> = {
             limit: "100",

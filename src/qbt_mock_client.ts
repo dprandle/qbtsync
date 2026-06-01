@@ -102,6 +102,15 @@ export class qbt_mock_client implements qbt_client {
         return from_mock_doc<qbt_timesheet>(updated);
     }
 
+    async delete_timesheet(id: number): Promise<void> {
+        // Mirror QBT: the timesheet is removed from the live collection and a
+        // copy is recorded in timesheets-deleted.
+        const doc = await mongo.get_mock_timesheets().findOne({ _id: id });
+        if (!doc) return;
+        await mongo.get_mock_deleted_timesheets().insertOne(doc);
+        await mongo.get_mock_timesheets().deleteOne({ _id: id });
+    }
+
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
@@ -230,6 +239,9 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async delete_jobcode_assignment(id: number): Promise<void> {
-        await mongo.get_mock_assignments().deleteOne({ _id: id });
+        // Mirror QBT: assignments are never truly deleted, just marked inactive.
+        await mongo
+            .get_mock_assignments()
+            .updateOne({ _id: id }, { $set: { active: false, last_modified: now_iso() } });
     }
 }

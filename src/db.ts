@@ -72,6 +72,10 @@ function get_mock_timesheets(): Collection<mock_qbt_timesheet> {
     return mock_db.collection<mock_qbt_timesheet>("timesheets");
 }
 
+function get_mock_deleted_timesheets(): Collection<mock_qbt_timesheet> {
+    return mock_db.collection<mock_qbt_timesheet>("timesheets-deleted");
+}
+
 const mongo = {
     connect,
     disconnect,
@@ -85,6 +89,7 @@ const mongo = {
     get_mock_jobcodes,
     get_mock_assignments,
     get_mock_timesheets,
+    get_mock_deleted_timesheets,
 };
 
 export default mongo;

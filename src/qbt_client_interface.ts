@@ -144,6 +144,7 @@ export interface qbt_client {
     fetch_timesheet(id: number): Promise<qbt_timesheet>;
     create_timesheet(data: timesheet_write_data): Promise<qbt_timesheet>;
     update_timesheet(id: number, data: Partial<timesheet_write_data>): Promise<qbt_timesheet>;
+    delete_timesheet(id: number): Promise<void>;
 
     // Users
     fetch_users(opts: fetch_users_opts): Promise<fetch_users_result>;
