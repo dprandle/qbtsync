@@ -73,7 +73,7 @@ function parse_dates(state: any): sync_state {
 export function load_sync_state(): sync_state {
     if (!existsSync(STATE_FILE)) {
         if (!logged_fresh_state) {
-            console.log(`[sync_state] No state file at ${resolve(STATE_FILE)} — starting from a fresh sync state.`);
+            ilog(`[sync_state] No state file at ${resolve(STATE_FILE)} — starting from a fresh sync state.`);
             logged_fresh_state = true;
         }
         return { ...default_state };
@@ -124,8 +124,8 @@ export function safe_cursor(progress: cursor_progress, since: Date): Date {
 export function reset_sync_state(): void {
     if (existsSync(STATE_FILE)) {
         unlinkSync(STATE_FILE);
-        console.log("Sync state reset.");
+        ilog("[sync_state] Sync state reset.");
     } else {
-        console.log("No sync state file found; nothing to reset.");
+        ilog("[sync_state] No sync state file found; nothing to reset.");
     }
 }

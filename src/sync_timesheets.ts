@@ -135,8 +135,8 @@ async function ingest_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
         if (!user_map || !jobcode_map) {
             // The user and/or jobcode haven't synced yet; skip so this is retried
             // once those loops create the mappings (symmetric with outbound_sync).
-            console.warn(
-                `[timesheets] Skipping QBT timesheet ${ts.id}: no mapping for ` +
+            wlog(
+                `[ts] Skipping QBT timesheet ${ts.id}: no mapping for ` +
                     `user_id=${ts.user_id} (${user_map ? "ok" : "missing"}), ` +
                     `jobcode_id=${ts.jobcode_id} (${jobcode_map ? "ok" : "missing"})`
             );
@@ -172,14 +172,14 @@ async function process_inbound_page(
 }
 
 export async function full_import(qbt: qbt_client): Promise<void> {
-    console.log("[timesheets] Starting full import...");
+    ilog("[ts] Starting full import...");
     const state = load_sync_state();
     let page = state.timesheets.full_import_page;
     const since = state.timesheets.last_synced ?? new Date(0);
     let progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
 
     while (true) {
-        console.log(`[timesheets] Fetching page ${page}...`);
+        ilog(`[ts] Fetching page ${page}...`);
         const { items: timesheets, more } = await qbt.fetch_timesheets({ page });
 
         if (timesheets.length === 0) break;
@@ -193,14 +193,14 @@ export async function full_import(qbt: qbt_client): Promise<void> {
     }
 
     save_timesheet_state({ full_import_complete: true, full_import_page: 1 });
-    console.log("[timesheets] Full import complete.");
+    ilog("[ts] Full import complete.");
 }
 
 export async function incremental_sync(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
     const modified_since = state.timesheets.last_synced ?? new Date(0);
 
-    console.log(`[timesheets] Inbound sync since ${modified_since.toISOString()}`);
+    ilog(`[ts] Inbound sync since ${modified_since.toISOString()}`);
 
     let page = 1;
     let progress: cursor_progress = { latest_resolved: modified_since, earliest_unresolved: null };
@@ -219,9 +219,9 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
     const latest_modified = safe_cursor(progress, modified_since);
     if (latest_modified > modified_since) {
         save_timesheet_state({ last_synced: latest_modified });
-        console.log(`[timesheets] Inbound cursor advanced to ${latest_modified.toISOString()}`);
+        ilog(`[ts] Inbound cursor advanced to ${latest_modified.toISOString()}`);
     } else {
-        console.log("[timesheets] No new inbound timesheets.");
+        ilog("[ts] No new inbound timesheets.");
     }
 }
 
@@ -256,12 +256,13 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
                         },
                     }
                 );
-                console.log(`[timesheets] Pushed edit for time record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
-            }
-            else {
+                ilog(`[ts] Pushed edit for time record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+            } else {
                 await qbt.delete_timesheet(mapping.qbt_id);
-                map_col.deleteOne({_id: mapping._id});
-                console.log(`[timesheets] Time record ${trec._id} archived - deleted QBT timesheet ${mapping.qbt_id} and associated mapping`);
+                map_col.deleteOne({ _id: mapping._id });
+                ilog(
+                    `[ts] Time record ${trec._id} archived - deleted QBT timesheet ${mapping.qbt_id} and associated mapping`
+                );
             }
         }
         return true;
@@ -271,14 +272,16 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
     // An incomplete record can never be created in QBT; treat it as done so the
     // cursor isn't stalled — it will reappear if hrid/cont_id are filled in later.
     if (!trec.hrid || !trec.cont_id) {
-        console.warn(`Got updated time record ${trec._id} with invalid hrid or cont_id - skipping sync to qbt`);
+        wlog(`Got updated time record ${trec._id} with invalid hrid or cont_id - skipping sync to qbt`);
         return true;
     }
 
     // Creating in QBT requires both user and jobcode mappings to exist.
     const user_map = await map_col.findOne({ type: "user", our_id: trec.hrid });
     if (!user_map || !jobcode_map) {
-        console.warn(`Got updated time record ${trec._id} with qbt jobcode: ${jobcode_map?.qbt_id ?? "invalid"} and qbt user: ${user_map?.qbt_id ?? "invalid"} - skipping sync for now without advancing cursor - should try again`);
+        wlog(
+            `Got updated time record ${trec._id} with qbt jobcode: ${jobcode_map?.qbt_id ?? "invalid"} and qbt user: ${user_map?.qbt_id ?? "invalid"} - skipping sync for now without advancing cursor - should try again`
+        );
         // Not synced yet; retry on a later pass after the user/jobcode syncs run.
         return false;
     }
@@ -295,7 +298,7 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
     });
     const map_obj = create_qbt_object_map_item(timesheet.id, trec._id, "timesheet", new Date(timesheet.last_modified));
     await map_col.insertOne(map_obj);
-    console.log(`[timesheets] Created QBT timesheet ${timesheet.id} for time_record ${trec._id}`);
+    ilog(`[ts] Created QBT timesheet ${timesheet.id} for time_record ${trec._id}`);
     return true;
 }
 
@@ -310,7 +313,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
 
     if (changed.length === 0) return;
 
-    console.log(`[timesheets] Outbound sync: ${changed.length} candidate(s)`);
+    ilog(`[ts] Outbound sync: ${changed.length} candidate(s)`);
 
     const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
     for (const trec of changed) {
@@ -323,7 +326,7 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
                 progress.earliest_unresolved = at;
             }
         } catch (err) {
-            console.error(`[timesheets] Outbound error for time_record ${trec._id}:`, err);
+            elog(`[ts] Outbound error for time_record ${trec._id}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
             }
@@ -333,8 +336,8 @@ export async function outbound_sync(qbt: qbt_client): Promise<void> {
     const latest = safe_cursor(progress, since);
     if (latest > since) {
         save_timesheet_state({ outbound_last_synced: latest });
-        console.log(`[timesheets] Outbound cursor advanced to ${latest.toISOString()}`);
+        ilog(`[ts] Outbound cursor advanced to ${latest.toISOString()}`);
     } else {
-        console.log("[timesheets] No outbound changes.");
+        ilog("[ts] No outbound changes.");
     }
 }

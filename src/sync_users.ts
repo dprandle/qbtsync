@@ -60,22 +60,22 @@ async function bootstrap_users_loop(
             let hres = hres_by_email.get(normalized_usr_email);
             if (!hres) hres = hres_by_email.get(normalized_username);
             if (!hres) {
-                console.log("[users] Could not find matching hres for tsuser:", qusr);
+                ilog("[usi] Could not find matching hres for tsuser:", qusr);
                 continue;
             }
 
             const already_mapped = await map_col.findOne({ type: "user", our_id: hres._id });
             if (already_mapped) {
-                console.log(
-                    `[users] Found match ${get_hres_log_str(hres)} but hres already linked to qbt user ${already_mapped.qbt_id}`
+                ilog(
+                    `[usi] Found match ${get_hres_log_str(hres)} but hres already linked to qbt user ${already_mapped.qbt_id}`
                 );
                 continue;
             }
 
             const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
             await map_col.insertOne(map_obj);
-            console.log(
-                `[users] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${qusr.id} (${qusr.email})`
+            ilog(
+                `[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${qusr.id} (${qusr.email})`
             );
         }
         if (!more) break;
@@ -84,7 +84,7 @@ async function bootstrap_users_loop(
 }
 
 async function bootstrap_users(qbt: qbt_client): Promise<void> {
-    console.log("[users] Running bootstrap: matching QBT users to hresources by email...");
+    ilog("[usi] Running bootstrap: matching QBT users to hresources by email...");
     const all_hres = await mongo.get_hres().find({}).toArray();
 
     // Create faster lookup table
@@ -93,7 +93,7 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
     await bootstrap_users_loop(qbt, hres_by_email, "yes");
     await bootstrap_users_loop(qbt, hres_by_email, "no");
     save_user_state({ bootstrap_complete: true });
-    console.log("[users] Bootstrap complete.");
+    ilog("[usi] Bootstrap complete.");
 }
 
 async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promise<void> {
@@ -121,8 +121,8 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         }
         if (Object.keys(updates).length > 0) {
             const new_usi = await qbt.update_user(usi.id, updates);
-            console.log(
-                `[users] Updated QBT user`,
+            ilog(
+                `[usi] Updated QBT user`,
                 usi,
                 `for hres ${get_hres_log_str(hres)} with`,
                 updates,
@@ -143,7 +143,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         });
         const map_obj = create_qbt_object_map_item(usi.id, hres._id, "user", new Date(usi.last_modified));
         await map_col.insertOne(map_obj);
-        console.log(`[users] Created QBT user`, usi, ` for hres ${get_hres_log_str(hres)}`);
+        ilog(`[usi] Created QBT user`, usi, ` for hres ${get_hres_log_str(hres)}`);
     }
 
     // Reconcile this user's assignments now that its active state is settled.
@@ -178,7 +178,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     }
 
     const since = state.users.last_synced ?? new Date(0);
-    console.log(`[users] Delta sync since ${since.toISOString()}`);
+    ilog(`[usi] Delta sync since ${since.toISOString()}`);
 
     // Query hresources modified since the cursor
     const changed = await mongo
@@ -193,7 +193,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
             await process_hres_update(hres, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
-            console.error(`[users] Error syncing hres ${hres._id}:`, err);
+            elog(`[usi] Error syncing hres ${hres._id}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
             }
@@ -203,8 +203,8 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
     const latest = safe_cursor(progress, since);
     if (latest > since) {
         save_user_state({ last_synced: latest });
-        console.log(`[users] Cursor advanced to ${latest.toISOString()}`);
+        ilog(`[usi] Cursor advanced to ${latest.toISOString()}`);
     } else {
-        console.log("[users] No hresource changes.");
+        ilog("[usi] No hresource changes.");
     }
 }

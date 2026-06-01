@@ -40,9 +40,9 @@ export async function reconcile_jc_assignments_by_jobcode(
         if (!actual.has(user_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
-                console.log(`[assignments] Created jc assignment for ${user_id}:${jobcode_id}`);
+                ilog(`[jca] Created jc assignment for ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to create jc assignment ${user_id}:${jobcode_id}:`, err);
+                elog(`[jca] Failed to create jc assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -51,9 +51,9 @@ export async function reconcile_jc_assignments_by_jobcode(
         if (!desired_user_ids.has(user_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
-                console.log(`[assignments] Deleted jc assignment ${user_id}:${jobcode_id}`);
+                ilog(`[jca] Deleted jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to delete jc assignment ${user_id}:${jobcode_id}:`, err);
+                elog(`[jca] Failed to delete jc assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -81,9 +81,9 @@ export async function reconcile_jc_assignments_by_user(
         if (!actual.has(jobcode_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
-                console.log(`[assignments] Create jc assignment ${user_id}:${jobcode_id}`);
+                ilog(`[jca] Create jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to create assignment ${user_id}:${jobcode_id}:`, err);
+                elog(`[jca] Failed to create assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -92,9 +92,9 @@ export async function reconcile_jc_assignments_by_user(
         if (!desired_jobcode_ids.has(jobcode_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
-                console.log(`[assignments] Deleted jc assignment ${user_id}:${jobcode_id}`);
+                ilog(`[jca] Deleted jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
+                elog(`[jca] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }

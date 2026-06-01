@@ -17,37 +17,37 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
-    console.log(`[timesheets] Starting sync loop (inbound: ${config.timesheet_sync_interval_ms}ms)`);
+    ilog(`[ts] Starting sync loop (inbound: ${config.timesheet_sync_interval_ms}ms)`);
     while (true) {
         try {
             await incremental_sync(qbt);
             await outbound_sync(qbt);
         } catch (err) {
-            console.error("[timesheets] Loop error:", err);
+            elog("[ts] Loop error:", err);
         }
         await sleep(config.timesheet_sync_interval_ms);
     }
 }
 
 async function run_user_loop(qbt: qbt_client): Promise<void> {
-    console.log(`[users] Starting sync loop (interval: ${config.user_sync_interval_ms}ms)`);
+    ilog(`[usi] Starting sync loop (interval: ${config.user_sync_interval_ms}ms)`);
     while (true) {
         try {
             await sync_users(qbt);
         } catch (err) {
-            console.error("[users] Loop error:", err);
+            elog("[usi] Loop error:", err);
         }
         await sleep(config.user_sync_interval_ms);
     }
 }
 
 async function run_jobcode_loop(qbt: qbt_client): Promise<void> {
-    console.log(`[jobcodes] Starting sync loop (interval: ${config.jobcode_sync_interval_ms}ms)`);
+    ilog(`[jc] Starting sync loop (interval: ${config.jobcode_sync_interval_ms}ms)`);
     while (true) {
         try {
             await sync_jobcodes(qbt);
         } catch (err) {
-            console.error("[jobcodes] Loop error:", err);
+            elog("[jc] Loop error:", err);
         }
         await sleep(config.jobcode_sync_interval_ms);
     }
@@ -64,7 +64,7 @@ async function main(): Promise<void> {
     try {
         let qbt: qbt_client;
         if (config.qbt_env === "dev") {
-            console.log("[dev] QBT_ENV=dev — using mock QBT backed by MongoDB (run 'npm run seed_mock_db' to populate it)");
+            ilog("[dev] QBT_ENV=dev — using mock QBT backed by MongoDB (run 'npm run seed_mock_db' to populate it)");
             qbt = new qbt_mock_client();
         } else {
             qbt = new qbt_api_client();
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
         // qbt_object_map, so those mappings must exist before the timesheet
         // import runs. Sync users and jobcodes first (bootstrap + delta), then
         // do the full timesheet import, then start all the periodic loops.
-        console.log("[startup] Syncing users and jobcodes before timesheets...");
+        ilog("[startup] Syncing users and jobcodes before timesheets...");
         await Promise.all([sync_users(qbt), sync_jobcodes(qbt)]);
 
         const state = load_sync_state();
@@ -82,7 +82,7 @@ async function main(): Promise<void> {
             await full_import(qbt);
         }
 
-        console.log("[startup] Initial sync complete — starting periodic loops.");
+        ilog("[startup] Initial sync complete — starting periodic loops.");
         await Promise.all([
             run_timesheet_loop(qbt),
             run_user_loop(qbt),
@@ -94,6 +94,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-    console.error("Fatal error:", err);
+    elog("Fatal error:", err);
     process.exit(1);
 });
