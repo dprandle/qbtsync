@@ -103,6 +103,7 @@ export class qbt_api_client implements qbt_client {
         const params: Record<string, string> = {
             limit: "100",
             page: String(opts.page ?? 1),
+            on_the_clock: "both"
         };
         if (opts.modified_since) {
             params["modified_since"] = opts.modified_since.toISOString();

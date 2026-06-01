@@ -3,3 +3,4 @@ dist/
 .env
 sync_state.json
 .emacs
+.dir-locals.el

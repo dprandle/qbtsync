@@ -21,11 +21,19 @@ function emp_hres_ids(cont: contract_route_doc): Set<string> {
 
 type byte = number;
 
+type uid = {
+    source_str: string;
+};
+
+type crole_link = {
+    emp_id: uid;
+};
+
 export type contract_route_doc = {
     _id: string;
     route_num: string;
     // keys are role_id source_str; each value is an array of crole_link objects
-    assignments: Record<string, Array<{ emp_id: { source_str: string } }>>;
+    assignments: Record<string, crole_link[]>;
     archived_info: change_info;
     last_update: change_info;
     route_names: value_change_item<string>[];

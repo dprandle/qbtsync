@@ -56,7 +56,6 @@ export class qbt_mock_client implements qbt_client {
         const col = mongo.get_mock_timesheets();
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
-        filter["on_the_clock"] = "both";
         if (opts.modified_since) {
             filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         } else if (!opts.ids?.length) {
