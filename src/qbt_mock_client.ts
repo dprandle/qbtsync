@@ -203,7 +203,9 @@ export class qbt_mock_client implements qbt_client {
     async update_jobcode(id: number, d: Partial<qbt_jobcode>): Promise<qbt_jobcode> {
         const last_modified = now_iso();
         const { id: _ignored, ...patch } = d;
-        await mongo.get_mock_jobcodes().updateOne({ _id: id }, { $set: { ...patch, last_modified } });
+        const update_obj = { $set: { ...patch, last_modified } };
+        dlog("Sending jc update", update_obj);
+        await mongo.get_mock_jobcodes().updateOne({ _id: id }, update_obj);
         const updated = await mongo.get_mock_jobcodes().findOne({ _id: id });
         if (!updated) throw new Error(`Jobcode ${id} not found after update`);
         return from_mock_doc<qbt_jobcode>(updated);

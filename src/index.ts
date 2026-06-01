@@ -80,7 +80,8 @@ async function main(): Promise<void> {
         // produces, so a partial bootstrap would reconcile against an
         // incomplete map.
         ilog("[startup] Running bootstraps before any sync...");
-        await Promise.all([bootstrap_users(qbt), bootstrap_jobcodes(qbt)]);
+        await bootstrap_jobcodes(qbt);
+        await bootstrap_users(qbt);
 
         const state = get_sync_state();
         if (force_full_import || !state.timesheets.full_import_complete) {

@@ -55,6 +55,8 @@ async function bootstrap_users_loop(
     let nomatches: qbt_user[] = [];
     while (true) {
         const { items: users, more } = await qbt.fetch_users({ page, active });
+        ilog(`[usi] Trying to match ${users.length} ${active === "yes" ? "active" : "archived"} users to hres`);
+
         for (const qusr of users) {
             // If we already have an entry for this user, skip it
             const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
@@ -104,15 +106,16 @@ export async function bootstrap_users(qbt: qbt_client): Promise<void> {
         ilog(`[usi] Could not find matching hres for archived tsuser ${get_user_log_str(u)}`);
     }
 
-    for (const u of active_nomatches) {
-        ilog(`[usi] Could not find matching hres for active tsuser ${get_user_log_str(u)}`);
-        const answer = await ask_yes_no("Would you like to archive this user?");
+    for (let i = 0; i < active_nomatches.length; ++i) {
+        const answer = await ask_yes_no(
+            `[usi] Archive ${get_user_log_str(active_nomatches[i])} (${i + 1} of ${active_nomatches.length})?`
+        );
         if (answer) {
-            const result = await qbt.update_user(u.id, {active: false});
+            const result = await qbt.update_user(active_nomatches[i].id, { active: false });
             ilog(`[usi] Updated user ${get_user_log_str(result)} to ${result.active ? "active" : "archived"}`);
         }
     }
-    
+
     save_user_state({ bootstrap_complete: true });
     ilog("[usi] Bootstrap complete.");
 }

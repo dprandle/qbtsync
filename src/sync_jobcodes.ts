@@ -79,14 +79,18 @@ async function bootstrap_jobcodes_loop(
     let nomatches: qbt_jobcode[] = [];
     while (true) {
         const { items: jobcodes, more } = await qbt.fetch_jobcodes({ page, active });
-        ilog(`[jc] Trying to match ${jobcodes.length} ${active ? "active" : "archived"} jobcodes to uber contracts`);
+        ilog(
+            `[jc] Trying to match ${jobcodes.length} ${active === "yes" ? "active" : "archived"} jobcodes to uber contracts`
+        );
         for (const jc of jobcodes) {
             const existing = await map_col.findOne({
                 type: "jobcode",
                 qbt_id: jc.id,
             });
             if (existing) {
-                ilog(`[jc] Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`);
+                ilog(
+                    `[jc] Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`
+                );
                 continue;
             }
 
@@ -132,17 +136,18 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     });
 
     // We want to match all active jobcodes first, then look at archived ones
-    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "yes");
-    const active_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "no");
+    const active_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "yes");
+    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "no");
     for (const jc of archived_nomatches) {
         ilog(`[jc] Could not find matching contract for archived jobcode ${get_jobcode_log_str(jc)}`);
     }
 
-    for (const jc of active_nomatches) {
-        ilog(`[jc] Could not find matching contract for active jobcode ${get_jobcode_log_str(jc)}`);
-        const answer = await ask_yes_no("Would you like to archive this jobcode?");
+    for (let i = 0; i < active_nomatches.length; ++i) {
+        const answer = await ask_yes_no(
+            `[jc] Archive ${get_jobcode_log_str(active_nomatches[i])} (${i + 1} of ${active_nomatches.length})?`
+        );
         if (answer) {
-            const result = await qbt.update_jobcode(jc.id, { active: false });
+            const result = await qbt.update_jobcode(active_nomatches[i].id, { active: false });
             ilog(`[jc] Updated jobcode ${get_jobcode_log_str(result)} to ${result.active ? "active" : "archived"}`);
         }
     }
