@@ -16,7 +16,7 @@ export const INVALID_IND = -1;
 export function find_value_change_item<T>(items:value_change_item<T> [], effective: Date, start_ind_reverse: number = INVALID_IND)
 {
     if (start_ind_reverse >= 0 && start_ind_reverse < items.length) start_ind_reverse = items.length - 1;
-    for (let ind = start_ind_reverse; ind < items.length; --ind) {
+    for (let ind = start_ind_reverse; ind >= 0 && ind < items.length; --ind) {
         if (items[ind].effective <= effective) {
             return ind;
         }
