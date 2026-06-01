@@ -3,7 +3,7 @@ import { save_jobcode_state, load_sync_state, cursor_progress, safe_cursor } fro
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
-import { is_awarded, EMP_ROLE_KEYS, reconcile_jobcode_assignments } from "./assignments";
+import { is_awarded, EMP_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
 
 // Collect the hresource ids linked to a contract under any employee role.
 function emp_hres_ids(cont: contract_route_doc): Set<string> {
@@ -167,7 +167,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     // Reconcile this jobcode's assignments now that its active state is settled.
     if (!jci) return;
     if (!jci.active) {
-        await reconcile_jobcode_assignments(qbt, jci.id, new Set());
+        await reconcile_jc_assignments_by_jobcode(qbt, jci.id, new Set());
         return;
     }
 
@@ -179,7 +179,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids, active: "yes" }));
         usrs.forEach((u) => desired.add(u.id));
     }
-    await reconcile_jobcode_assignments(qbt, jci.id, desired);
+    await reconcile_jc_assignments_by_jobcode(qbt, jci.id, desired);
 }
 
 export async function sync_jobcodes(qbt: qbt_client): Promise<void> {

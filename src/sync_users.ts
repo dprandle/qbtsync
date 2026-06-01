@@ -3,7 +3,7 @@ import { save_user_state, load_sync_state, cursor_progress, safe_cursor } from "
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
-import { EMP_ROLE_KEYS, is_awarded, reconcile_user_assignments } from "./assignments";
+import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
@@ -149,7 +149,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     // Reconcile this user's assignments now that its active state is settled.
     if (!usi) return;
     if (!usi.active) {
-        await reconcile_user_assignments(qbt, usi.id, new Set());
+        await reconcile_jc_assignments_by_user(qbt, usi.id, new Set());
         return;
     }
 
@@ -167,7 +167,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids, active: "yes" }));
         jcs.forEach((jc) => desired.add(jc.id));
     }
-    await reconcile_user_assignments(qbt, usi.id, desired);
+    await reconcile_jc_assignments_by_user(qbt, usi.id, desired);
 }
 
 export async function sync_users(qbt: qbt_client): Promise<void> {

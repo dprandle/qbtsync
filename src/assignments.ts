@@ -1,5 +1,4 @@
-
-import { contract_route_doc } from "./sync_jobcodes"
+import { contract_route_doc } from "./sync_jobcodes";
 import { qbt_client } from "./qbt_client_interface";
 
 const BID_ROLE_KEYS = new Set([
@@ -21,7 +20,7 @@ export function is_awarded(cont: contract_route_doc): boolean {
 
 // Reconcile a single QBT jobcode's assignments against the desired set of active
 // QBT user ids. Pass an empty set to remove every assignment for the jobcode.
-export async function reconcile_jobcode_assignments(
+export async function reconcile_jc_assignments_by_jobcode(
     qbt: qbt_client,
     jobcode_id: number,
     desired_user_ids: Set<number>
@@ -41,8 +40,9 @@ export async function reconcile_jobcode_assignments(
         if (!actual.has(user_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
+                console.log(`[assignments] Created jc assignment for ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to create assignment ${user_id}:${jobcode_id}:`, err);
+                console.error(`[assignments] Failed to create jc assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -51,8 +51,9 @@ export async function reconcile_jobcode_assignments(
         if (!desired_user_ids.has(user_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
+                console.log(`[assignments] Deleted jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
-                console.error(`[assignments] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
+                console.error(`[assignments] Failed to delete jc assignment ${user_id}:${jobcode_id}:`, err);
             }
         }
     }
@@ -60,7 +61,7 @@ export async function reconcile_jobcode_assignments(
 
 // Reconcile a single QBT user's assignments against the desired set of active QBT
 // jobcode ids. Pass an empty set to remove every assignment for the user.
-export async function reconcile_user_assignments(
+export async function reconcile_jc_assignments_by_user(
     qbt: qbt_client,
     user_id: number,
     desired_jobcode_ids: Set<number>
@@ -80,6 +81,7 @@ export async function reconcile_user_assignments(
         if (!actual.has(jobcode_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
+                console.log(`[assignments] Create jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
                 console.error(`[assignments] Failed to create assignment ${user_id}:${jobcode_id}:`, err);
             }
@@ -90,6 +92,7 @@ export async function reconcile_user_assignments(
         if (!desired_jobcode_ids.has(jobcode_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
+                console.log(`[assignments] Deleted jc assignment ${user_id}:${jobcode_id}`);
             } catch (err) {
                 console.error(`[assignments] Failed to delete assignment ${user_id}:${jobcode_id}:`, err);
             }
