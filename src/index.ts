@@ -3,8 +3,8 @@ import { config } from "./config";
 import mongo from "./db";
 import { load_sync_state, reset_sync_state } from "./sync_state";
 import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
-import { sync_users } from "./sync_users";
-import { sync_jobcodes } from "./sync_jobcodes";
+import { sync_users, bootstrap_users } from "./sync_users";
+import { sync_jobcodes, bootstrap_jobcodes } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
@@ -70,10 +70,18 @@ async function main(): Promise<void> {
             qbt = new qbt_api_client();
         }
 
+        // Bootstrap must fully complete for both users and jobcodes before any
+        // sync runs: jobcode-assignment reconciliation (in both the user and
+        // jobcode syncs) reads the user<->jobcode mappings the other bootstrap
+        // produces, so a partial bootstrap would reconcile against an
+        // incomplete map.
+        ilog("[startup] Running bootstraps before any sync...");
+        await Promise.all([bootstrap_users(qbt), bootstrap_jobcodes(qbt)]);
+
         // Time records reverse-map each QBT timesheet's user/jobcode through
         // qbt_object_map, so those mappings must exist before the timesheet
-        // import runs. Sync users and jobcodes first (bootstrap + delta), then
-        // do the full timesheet import, then start all the periodic loops.
+        // import runs. Sync users and jobcodes first, then do the full timesheet
+        // import, then start all the periodic loops.
         ilog("[startup] Syncing users and jobcodes before timesheets...");
         await Promise.all([sync_users(qbt), sync_jobcodes(qbt)]);
 

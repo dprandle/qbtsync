@@ -83,7 +83,8 @@ async function bootstrap_users_loop(
     }
 }
 
-async function bootstrap_users(qbt: qbt_client): Promise<void> {
+export async function bootstrap_users(qbt: qbt_client): Promise<void> {
+    if (load_sync_state().users.bootstrap_complete) return;
     ilog("[usi] Running bootstrap: matching QBT users to hresources by email...");
     const all_hres = await mongo.get_hres().find({}).toArray();
 
@@ -172,11 +173,6 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
 
 export async function sync_users(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
-
-    if (!state.users.bootstrap_complete) {
-        await bootstrap_users(qbt);
-    }
-
     const since = state.users.last_synced ?? new Date(0);
     ilog(`[usi] Delta sync since ${since.toISOString()}`);
 

@@ -105,7 +105,8 @@ async function bootstrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contr
     }
 }
 
-async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
+export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
+    if (load_sync_state().jobcodes.bootstrap_complete) return;
     ilog("[jc] Running bootstrap: matching QBT jobcodes to contracts by route name...");
 
     // Load all contracts to search against
@@ -184,11 +185,6 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
 
 export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
     const state = load_sync_state();
-
-    if (!state.jobcodes.bootstrap_complete) {
-        await bootstrap_jobcodes(qbt);
-    }
-
     const since = state.jobcodes.last_synced ?? new Date(0);
     ilog(`[jc] Delta sync since ${since.toISOString()}`);
 
