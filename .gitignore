@@ -3,3 +3,5 @@ dist/
 .env
 sync_state.json
 .emacs
+
+logs/

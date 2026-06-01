@@ -85,7 +85,10 @@ async function bootstrap_jobcodes_loop(
                 type: "jobcode",
                 qbt_id: jc.id,
             });
-            if (existing) continue;
+            if (existing) {
+                ilog(`Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`);
+                continue;
+            }
 
             const match = find_matching_contract(jc, awarded_contracts);
             if (!match) {

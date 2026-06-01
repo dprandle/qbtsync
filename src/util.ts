@@ -17,6 +17,6 @@ export async function ask_yes_no(question: string) {
             return false;
         }
 
-        console.log("Please enter y/yes or n/no.");
+        ilog("Please enter y/yes or n/no.");
     }
 }
