@@ -5,6 +5,7 @@ import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME } from "./uobj_common";
 import { change_info } from "./uobj_common";
+import { contract_route_doc } from "./sync_jobcodes";
 const TIME_RECORD_SCHEMA_VERSION = 1;
 
 export type time_record = {
@@ -17,26 +18,53 @@ export type time_record = {
     hrid: string; // hresource id
     cont_id: string; // contract id
     notes: string;
-    date: Date;
     start: Date;
     end: Date;
+    date: Date;
 };
 
-function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont_id: string): time_record {
+function tz_str(tz_bytes: number[]): string {
+    return Buffer.from(tz_bytes).toString("utf8");
+}
+
+function day_start(start: Date, tz_bytes: number[]): Date {
+    const tz_id = tz_str(tz_bytes);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz_id,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    });
+    const fmt_parts = fmt.formatToParts(start);
+
+    const find_type = (type: string, parts: Intl.DateTimeFormatPart[]) => {
+        const val = parts.find((elem) => elem.type === type);
+        return val!.value;
+    };
+
+    const year = find_type("year", fmt_parts);
+    const month = find_type("month", fmt_parts);
+    const day = find_type("day", fmt_parts);
+    return new Date(`${year}-${month}-${day}T00:00:00Z`);
+}
+
+function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: contract_route_doc): time_record {
     const now = new Date();
+    const start = new Date(ts.start);
+    const end = ts.end ? new Date(ts.end) : INVALID_DATETIME;
     return {
         _id: randomUUID(),
         custom_params: {},
         archived_info: { by: "", on: INVALID_DATETIME },
-        last_update: { by: "qbtsync", on: now },
-        created: { by: "qbtsync", on: now },
+        last_update: { by: `${QBT_UPDATE_BY} (${ts.location})`, on: now },
+        created: { by: `${QBT_UPDATE_BY} (${ts.location})`, on: now },
         schema_version: TIME_RECORD_SCHEMA_VERSION,
         hrid: hres_id,
-        cont_id: cont_id,
+        cont_id: cont._id,
         notes: ts.notes,
-        start: new Date(ts.start),
-        end: new Date(ts.end),
-        date: new Date(ts.date),
+        start,
+        end,
+        date: day_start(start, cont.timezone),
     };
 }
 
@@ -115,7 +143,9 @@ async function ingest_timesheet(ts: qbt_timesheet, qbt: qbt_client): Promise<boo
             return false;
         }
 
-        const trec = timesheet_to_time_record(ts, user_map.our_id, jobcode_map.our_id);
+        const cont = await mongo.get_conts().findOne({ _id: jobcode_map.our_id });
+        if (!cont) throw Error("Failed to fetch contract with id " + jobcode_map.our_id);
+        const trec = timesheet_to_time_record(ts, user_map.our_id, cont);
         await mongo.get_trecs().insertOne(trec);
         const map_obj = create_qbt_object_map_item(ts.id, trec._id, "timesheet", incoming_modified);
         await map_col.insertOne(map_obj);

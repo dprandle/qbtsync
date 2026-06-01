@@ -18,6 +18,8 @@ function emp_hres_ids(cont: contract_route_doc): Set<string> {
     return ids;
 }
 
+type byte = number;
+
 export type contract_route_doc = {
     _id: string;
     route_num: string;
@@ -26,6 +28,7 @@ export type contract_route_doc = {
     archived_info: change_info;
     last_update: change_info;
     route_names: value_change_item<string>[];
+    timezone: byte[];
 };
 
 function get_current_route_name(cont: contract_route_doc): string {

@@ -16,11 +16,6 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
-    const state = load_sync_state();
-    if (force_full_import || !state.timesheets.full_import_complete) {
-        await full_import(qbt);
-    }
-
     console.log(`[timesheets] Starting sync loop (inbound: ${config.timesheet_sync_interval_ms}ms)`);
     while (true) {
         try {
@@ -74,6 +69,19 @@ async function main(): Promise<void> {
             qbt = new qbt_api_client();
         }
 
+        // Time records reverse-map each QBT timesheet's user/jobcode through
+        // qbt_object_map, so those mappings must exist before the timesheet
+        // import runs. Sync users and jobcodes first (bootstrap + delta), then
+        // do the full timesheet import, then start all the periodic loops.
+        console.log("[startup] Syncing users and jobcodes before timesheets...");
+        await Promise.all([sync_users(qbt), sync_jobcodes(qbt)]);
+
+        const state = load_sync_state();
+        if (force_full_import || !state.timesheets.full_import_complete) {
+            await full_import(qbt);
+        }
+
+        console.log("[startup] Initial sync complete — starting periodic loops.");
         await Promise.all([
             run_timesheet_loop(qbt),
             run_user_loop(qbt),

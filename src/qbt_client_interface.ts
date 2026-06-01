@@ -93,13 +93,12 @@ export type qbt_timesheet = {
     end: string; // ISO 8601
     duration: number; // seconds
     date: string; // YYYY-MM-DD
-    type: "regular" | "pto";
-    active: boolean;
-    locked: number;
+    tz: number;
+    tz_str: string;
+    location: string;
+    on_the_clock: boolean;
     notes: string;
-    last_modified: string; // ISO 8601
-    tz: string;
-    customfields: Record<string, string>;
+    last_modified: string; // ISO 8601    
 };
 
 export type qbt_timesheets_response = {
@@ -115,10 +114,10 @@ export type qbt_timesheets_response = {
 
 export type qbt_jobcode = {
     id: number;
-    parent_id: number;
-    name: string;
     active: boolean;
+    name: string;
     last_modified: string; // ISO 8601
+    created: string; // ISO 8601
 };
 
 export type qbt_jobcodes_response = {
