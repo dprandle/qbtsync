@@ -115,7 +115,9 @@ export class qbt_mock_client implements qbt_client {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
-        if (opts.active) filter["active"] = opts.active;
+        // If active is both, we just don't add a filter for mock
+        if (opts.active === "yes") filter["active"] = true;
+        if (opts.active === "no")  filter["active"] = false;
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_users()
@@ -128,7 +130,7 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_user(id: number): Promise<qbt_user> {
-        const { items } = await this.fetch_users({ ids: [id] });
+        const { items } = await this.fetch_users({ ids: [id], active: "both" });
         return expect_one(items, "user", id);
     }
 
@@ -167,7 +169,9 @@ export class qbt_mock_client implements qbt_client {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
         if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
-        if (opts.active) filter["active"] = opts.active;
+        // If active is both, we just don't add a filter for mock
+        if (opts.active === "yes") filter["active"] = true;
+        if (opts.active === "no") filter["active"] = false;
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_jobcodes()
@@ -180,7 +184,7 @@ export class qbt_mock_client implements qbt_client {
     }
 
     async fetch_jobcode(id: number): Promise<qbt_jobcode> {
-        const { items } = await this.fetch_jobcodes({ ids: [id] });
+        const { items } = await this.fetch_jobcodes({ ids: [id], active: "both" });
         return expect_one(items, "jobcode", id);
     }
 

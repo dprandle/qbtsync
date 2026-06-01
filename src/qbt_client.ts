@@ -137,16 +137,16 @@ export class qbt_api_client implements qbt_client {
         const params: Record<string, string> = {
             limit: "100",
             page: String(opts.page ?? 1),
+            active: opts.active,
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
-        if (opts.active) params["active"] = opts.active ? "true" : "false";
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/users", params)) as qbt_users_response;
         return { items: Object.values(data.results.users), more: data.more };
     }
 
     async fetch_user(id: number): Promise<qbt_user> {
-        const { items } = await this.fetch_users({ ids: [id] });
+        const { items } = await this.fetch_users({ ids: [id], active: "both" });
         return expect_one(items, "user", id);
     }
 
@@ -171,16 +171,16 @@ export class qbt_api_client implements qbt_client {
         const params: Record<string, string> = {
             limit: "100",
             page: String(opts.page ?? 1),
+            active: opts.active,
         };
         if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
-        if (opts.active) params["active"] = opts.active ? "true" : "false";
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/jobcodes", params)) as qbt_jobcodes_response;
         return { items: Object.values(data.results.jobcodes), more: data.more };
     }
 
     async fetch_jobcode(id: number): Promise<qbt_jobcode> {
-        const { items } = await this.fetch_jobcodes({ ids: [id] });
+        const { items } = await this.fetch_jobcodes({ ids: [id], active: "both" });
         return expect_one(items, "jobcode", id);
     }
 

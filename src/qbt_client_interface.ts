@@ -20,6 +20,8 @@ export async function fetch_all_by_ids<T>(
     return out;
 }
 
+export type active_param = "yes" | "no" | "both";
+
 export type fetch_timesheets_opts = {
     modified_since?: Date;
     page?: number;
@@ -29,18 +31,18 @@ export type fetch_timesheets_opts = {
 export type fetch_timesheets_result = fetch_items_result<qbt_timesheet>;
 
 export type fetch_users_opts = {
+    active: active_param;
     modified_since?: Date;
     page?: number;
-    active?: boolean;
     ids?: number[];
 };
 
 export type fetch_users_result = fetch_items_result<qbt_user>;
 
 export type fetch_jobcodes_opts = {
+    active: active_param;
     modified_since?: Date;
     page?: number;
-    active?: boolean;
     ids?: number[];
 };
 

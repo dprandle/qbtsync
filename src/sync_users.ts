@@ -2,7 +2,7 @@ import mongo from "./db";
 import { save_user_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
-import { qbt_client, qbt_user, fetch_all_by_ids } from "./qbt_client_interface";
+import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_user_assignments } from "./assignments";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
@@ -43,7 +43,7 @@ function normalize_phone_number(phone_str: string): string {
 async function bootstrap_users_loop(
     qbt: qbt_client,
     hres_by_email: Map<string, hresource_doc>,
-    active: boolean
+    active: active_param
 ): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
@@ -90,8 +90,8 @@ async function bootstrap_users(qbt: qbt_client): Promise<void> {
     // Create faster lookup table
     const hres_by_email = new Map(all_hres.map((h) => [normalize_email(h.email), h]));
     // Do active users first, then non active users as we want our active ones to take priority
-    await bootstrap_users_loop(qbt, hres_by_email, true);
-    await bootstrap_users_loop(qbt, hres_by_email, false);
+    await bootstrap_users_loop(qbt, hres_by_email, "yes");
+    await bootstrap_users_loop(qbt, hres_by_email, "no");
     save_user_state({ bootstrap_complete: true });
     console.log("[users] Bootstrap complete.");
 }
@@ -164,10 +164,8 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     if (cont_ids.length > 0) {
         const cont_maps = await map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray();
         const qbt_jc_ids = cont_maps.map((r) => r.qbt_id);
-        const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids }));
-        for (const jc of jcs) {
-            if (jc.active) desired.add(jc.id);
-        }
+        const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids, active: "yes" }));
+        jcs.forEach((jc) => desired.add(jc.id));
     }
     await reconcile_user_assignments(qbt, usi.id, desired);
 }

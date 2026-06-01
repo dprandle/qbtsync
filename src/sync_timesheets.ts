@@ -256,12 +256,12 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
                         },
                     }
                 );
-                console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
+                console.log(`[timesheets] Pushed edit for time record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
             }
             else {
-                
-                console.log(`[timesheets] Pushed edit for time_record ${trec._id} to QBT timesheet ${mapping.qbt_id}`);
-                
+                await qbt.delete_timesheet(mapping.qbt_id);
+                map_col.deleteOne({_id: mapping._id});
+                console.log(`[timesheets] Time record ${trec._id} archived - deleted QBT timesheet ${mapping.qbt_id} and associated mapping`);
             }
         }
         return true;
@@ -270,11 +270,15 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
     // No mapping: time_record was created directly in UberMail.
     // An incomplete record can never be created in QBT; treat it as done so the
     // cursor isn't stalled — it will reappear if hrid/cont_id are filled in later.
-    if (!trec.hrid || !trec.cont_id) return true;
+    if (!trec.hrid || !trec.cont_id) {
+        console.warn(`Got updated time record ${trec._id} with invalid hrid or cont_id - skipping sync to qbt`);
+        return true;
+    }
 
     // Creating in QBT requires both user and jobcode mappings to exist.
     const user_map = await map_col.findOne({ type: "user", our_id: trec.hrid });
     if (!user_map || !jobcode_map) {
+        console.warn(`Got updated time record ${trec._id} with qbt jobcode: ${jobcode_map?.qbt_id ?? "invalid"} and qbt user: ${user_map?.qbt_id ?? "invalid"} - skipping sync for now without advancing cursor - should try again`);
         // Not synced yet; retry on a later pass after the user/jobcode syncs run.
         return false;
     }

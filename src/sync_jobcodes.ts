@@ -1,7 +1,7 @@
 import mongo from "./db";
 import { save_jobcode_state, load_sync_state, cursor_progress, safe_cursor } from "./sync_state";
 import { create_qbt_object_map_item } from "./qbt_object_map";
-import { qbt_client, qbt_jobcode, fetch_all_by_ids } from "./qbt_client_interface";
+import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
 import { is_awarded, EMP_ROLE_KEYS, reconcile_jobcode_assignments } from "./assignments";
 
@@ -59,7 +59,7 @@ function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_d
     return match;
 }
 
-async function bootstrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contract_route_doc[], active: boolean) {
+async function bootstrap_jobcodes_loop(qbt: qbt_client, awarded_contracts: contract_route_doc[], active: active_param) {
     const map_col = mongo.get_qbt_map_objects();
     let page = 1;
     while (true) {
@@ -115,8 +115,8 @@ async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     });
 
     // We want to match all active jobcodes first, then look at archived ones
-    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, true);
-    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, false);
+    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "yes");
+    await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "no");
     save_jobcode_state({ bootstrap_complete: true });
     console.log("[jobcodes] Bootstrap complete.");
 }
@@ -176,10 +176,8 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     if (hres_ids.length > 0) {
         const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
         const qbt_user_ids = user_maps.map((r) => r.qbt_id);
-        const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids }));
-        for (const u of usrs) {
-            if (u.active) desired.add(u.id);
-        }
+        const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids, active: "yes" }));
+        usrs.forEach((u) => desired.add(u.id));
     }
     await reconcile_jobcode_assignments(qbt, jci.id, desired);
 }
