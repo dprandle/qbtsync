@@ -6,6 +6,7 @@ import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME, is_active } from "./uobj_common";
 import { change_info } from "./uobj_common";
 import { contract_route_doc } from "./sync_jobcodes";
+import { config } from "./config";
 const TIME_RECORD_SCHEMA_VERSION = 1;
 
 export type time_record = {
@@ -201,9 +202,17 @@ async function process_inbound_page(
 // run re-scans from scratch (ingest is idempotent). Advancing it per page would be
 // unsafe: pages are not ordered by last_modified, so a page with a recent max
 // would jump the cursor past older-modified rows on pages not yet fetched.
+//
+// The cursor advances to the moment the scan *started* (minus a small skew pad), not
+// to the newest last_modified we observed. The scan spans a window of wall-clock time
+// across many page fetches, and a row on an already-fetched page can be edited before
+// the scan ends; advancing only to scan_start guarantees that edit (stamped
+// >= scan_start by QBT's clock) is re-fetched next run. scan_start alone covers the
+// full scan duration; the pad only absorbs clock skew between us and QBT (see config).
 export async function update_time_recs_from_timesheets(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
     const modified_since = state.timesheets.last_synced ?? CURSOR_EPOCH;
+    const scan_start = new Date(Date.now() - config.qbt_clock_skew_pad_ms);
 
     ilog(`[ts] Inbound sync since ${modified_since.toISOString()}`);
 
@@ -222,12 +231,14 @@ export async function update_time_recs_from_timesheets(qbt: qbt_client): Promise
         page++;
     }
 
-    const latest_modified = safe_cursor(progress, modified_since);
-    if (latest_modified > modified_since) {
-        save_timesheet_state({ last_synced: latest_modified });
-        ilog(`[ts] Inbound cursor advanced to ${latest_modified.toISOString()}`);
+    // Advance to scan_start (see above), still capped below any item we skipped this
+    // run (earliest_unresolved) and floored at the existing cursor by safe_cursor.
+    const next_cursor = safe_cursor({ ...progress, latest_resolved: scan_start }, modified_since);
+    if (next_cursor > modified_since) {
+        save_timesheet_state({ last_synced: next_cursor });
+        ilog(`[ts] Inbound cursor advanced to ${next_cursor.toISOString()}`);
     } else {
-        ilog("[ts] No new inbound timesheets.");
+        ilog("[ts] No inbound cursor advance.");
     }
 }
 
