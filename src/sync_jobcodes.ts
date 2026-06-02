@@ -54,21 +54,19 @@ function get_jobcode_log_str(jc: qbt_jobcode) {
     return `${jc.name} (${jc.id})`;
 }
 
+// True when needle is a non-empty substring of the jobcode name. The empty-string
+// guard is essential: "".includes("") and `anything.includes("")` are both true, so
+// a contract with no (current) route name would otherwise match every jobcode.
+function jc_name_contains(jc: qbt_jobcode, needle: string): boolean {
+    const n = needle.trim().toLowerCase();
+    return n.length > 0 && jc.name.toLowerCase().includes(n);
+}
+
 // First find see if we find a match for any current contract route name. If no match is found, search through all route names.
 function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_doc[]) {
-    let match = all_contracts.find((c) => {
-        const rname = get_current_route_name(c);
-        return jc.name.toLowerCase().includes(rname.toLowerCase());
-    });
+    let match = all_contracts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
     if (!match) {
-        match = all_contracts.find((c) => {
-            for (const chg_val of c.route_names) {
-                if (jc.name.toLowerCase().includes(chg_val.val.toLowerCase())) {
-                    return true;
-                }
-            }
-            return false;
-        });
+        match = all_contracts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
     }
     return match;
 }

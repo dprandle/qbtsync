@@ -251,7 +251,19 @@ async function process_inbound_page(
         const ts = timesheets[i];
         const mod = new Date(ts.last_modified);
         ilog(`[ts] Processing update for ${get_timesheet_log_str(ts)} (${i + 1} of ${timesheets.length})`);
-        const resolved = process_timesheet_update(ts, batch);
+        let resolved: boolean;
+        try {
+            resolved = process_timesheet_update(ts, batch);
+        } catch (err) {
+            // A thrown row is a data-integrity problem that won't fix itself on retry
+            // (e.g. a jobcode mapping whose contract was deleted, or a contract with an
+            // invalid timezone). Log loudly and skip it so one bad row can't wedge the
+            // whole inbound scan; treat as resolved so the cursor advances past it. Both
+            // current throw sites fire before any op is queued into batch, so skipping
+            // here leaves the page batch consistent.
+            elog(`[ts] Skipping unprocessable timesheet ${get_timesheet_log_str(ts)} - advancing past it:`, err);
+            resolved = true;
+        }
         if (resolved) {
             if (mod > latest_resolved) latest_resolved = mod;
         } else if (!earliest_unresolved || mod < earliest_unresolved) {

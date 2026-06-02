@@ -15,35 +15,51 @@ function sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
-    ilog(`[ts] Starting sync loop (inbound: ${config.timesheet_sync_interval_ms}ms)`);
-    while (true) {
-        try {
-            await update_time_recs_from_timesheets(qbt);
-            await update_timesheets_from_time_recs(qbt);
-        } catch (err) {
-            elog("[ts] Loop error:", err);
-        }
-        await sleep(config.timesheet_sync_interval_ms);
-    }
+// One inbound+outbound timesheet pass. Inbound first so any new QBT-side
+// timesheets are ingested before we push our changes back out.
+async function sync_timesheets_once(qbt: qbt_client): Promise<void> {
+    await update_time_recs_from_timesheets(qbt);
+    await update_timesheets_from_time_recs(qbt);
 }
 
-// Users and jobcodes run in a single sequential pass rather than as concurrent
-// loops. They share the qbt object map and reconcile the same jobcode-assignment
-// records from opposite directions, so running them one at a time keeps that
-// shared state deterministic and avoids interleaving races. User changes
-// (archive, time-tracking toggle) only bump the hresource doc, so user-side
-// reconciliation is still required alongside the jobcode-side pass.
-async function run_entity_loop(qbt: qbt_client): Promise<void> {
-    ilog(`[entity] Starting users+jobcodes sync loop (interval: ${config.entity_sync_interval_ms}ms)`);
+// One users+jobcodes reconciliation pass. They share the qbt object map and
+// reconcile the same jobcode-assignment records from opposite directions, so
+// running them one at a time keeps that shared state deterministic and avoids
+// interleaving races. User changes (archive, time-tracking toggle) only bump the
+// hresource doc, so user-side reconciliation is still required alongside the
+// jobcode-side pass.
+async function sync_entities_once(qbt: qbt_client): Promise<void> {
+    await update_users_from_hres(qbt);
+    await update_jobcodes_from_contracts(qbt);
+}
+
+// Everything runs as one sequential loop rather than as concurrent loops. Node is
+// single-threaded, so the old Promise.all loops never ran in parallel — they only
+// interleaved at await points, which is exactly what made the shared qbt-object-map
+// access racy. Serializing onto one tick removes those interleavings, guarantees
+// entities are reconciled before the timesheet pass that consumes their mappings,
+// and (once added) lets the cleanup pass run with the other work provably paused.
+// The base tick is the timesheet interval; entities run every Nth tick.
+async function run_sync_loop(qbt: qbt_client): Promise<void> {
+    ilog(
+        `[sync] Starting sync loop (tick: ${config.timesheet_sync_interval_ms}ms, entities every ${config.entity_sync_every_n_ticks} tick(s))`
+    );
+    let tick = 0;
     while (true) {
-        try {
-            await update_users_from_hres(qbt);
-            await update_jobcodes_from_contracts(qbt);
-        } catch (err) {
-            elog("[entity] Loop error:", err);
+        if (tick % config.entity_sync_every_n_ticks === 0) {
+            try {
+                await sync_entities_once(qbt);
+            } catch (err) {
+                elog("[entity] Pass error:", err);
+            }
         }
-        await sleep(config.entity_sync_interval_ms);
+        try {
+            await sync_timesheets_once(qbt);
+        } catch (err) {
+            elog("[ts] Pass error:", err);
+        }
+        tick++;
+        await sleep(config.timesheet_sync_interval_ms);
     }
 }
 
@@ -80,8 +96,8 @@ async function main(): Promise<void> {
         // The first inbound timesheet pass (cursor = CURSOR_EPOCH) performs the
         // historical backfill bounded by config.timesheet_start_date; no separate
         // full-import step is needed.
-        ilog("[startup] Bootstraps complete — starting periodic loops.");
-        await Promise.all([run_timesheet_loop(qbt), run_entity_loop(qbt)]);
+        ilog("[startup] Bootstraps complete — starting periodic sync loop.");
+        await run_sync_loop(qbt);
     } finally {
         await mongo.disconnect();
     }

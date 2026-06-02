@@ -24,8 +24,11 @@ export const config = {
     // the sync interval: an edit gets re-fetched across ~(pad + interval)/interval
     // runs, so an oversized pad just wastes (idempotent) re-fetches.
     qbt_clock_skew_pad_ms: optional_int("QBT_CLOCK_SKEW_PAD_MS", 5000),
-    // Users and jobcodes are reconciled together in one sequential pass; they
-    // share the qbt object map and reconcile the same assignment records, so a
-    // single cadence keeps that work deterministic and free of interleaving.
-    entity_sync_interval_ms: optional_int("ENTITY_SYNC_INTERVAL_MS", 60000),
+    // The sync runs as one sequential loop whose base tick is the timesheet
+    // interval above. Users+jobcodes are reconciled every Nth tick rather than on
+    // their own clock: they share the qbt object map and reconcile the same
+    // assignment records as the timesheet pass, so serializing everything onto one
+    // tick keeps that shared state deterministic and free of interleaving. N=1
+    // reconciles entities on every tick (the previous equal-interval behavior).
+    entity_sync_every_n_ticks: optional_int("ENTITY_SYNC_EVERY_N_TICKS", 1),
 };
