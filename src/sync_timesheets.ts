@@ -23,6 +23,11 @@ export type time_record = {
     date: Date;
 };
 
+function should_have_qbt_timesheet(archived_on: Date): boolean {
+    return is_active(archived_on);
+}
+
+
 function tz_str(tz_bytes: number[]): string {
     return Buffer.from(tz_bytes).toString("utf8");
 }
@@ -230,13 +235,23 @@ export async function incremental_sync(qbt: qbt_client): Promise<void> {
 // because its QBT user/jobcode mappings don't exist yet and it should be retried.
 async function process_time_record_update(trec: time_record, qbt: qbt_client): Promise<boolean> {
     const map_col = mongo.get_qbt_map_objects();
+    const want = should_have_qbt_timesheet(trec.archived_info.on);
     const mapping = await map_col.findOne({ type: "timesheet", our_id: trec._id });
     const on_the_clock = trec.end.getTime() === INVALID_DATETIME.getTime();
 
     // A jobcode can be changed in uber, but not an employee
     const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: trec.cont_id });
 
+    
     if (mapping) {
+        const ts = await qbt.fetch_timesheet(mapping.qbt_id);
+        const updates: Partial<qbt_timesheet> = {};
+
+        if (want) {
+            
+        }
+
+        
         if (trec.last_update.by !== QBT_UPDATE_BY) {
             if (is_active(trec.archived_info.on)) {
                 // Desktop-originated edit — push to QBT
