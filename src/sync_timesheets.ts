@@ -3,7 +3,7 @@ import { randomUUID } from "crypto";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, QBT_UPDATE_BY, type qbt_object_map } from "./qbt_object_map";
-import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
+import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME, is_active } from "./uobj_common";
 import { change_info } from "./uobj_common";
 import { contract_route_doc } from "./sync_jobcodes";
@@ -311,13 +311,48 @@ export async function update_time_recs_from_timesheets(qbt: qbt_client): Promise
     }
 }
 
+// Per-run read cache for the outbound timesheet sync. The whole changed set's
+// mappings and current QBT timesheets are loaded once up front so the per-item loop
+// does no reads of its own (it still writes per item). Writes stay per-item because
+// QBT create/update can't share a transaction with our Mongo write; only the reads
+// are batched here.
+type outbound_ts_cache = {
+    ts_maps: Map<string, qbt_object_map>; // timesheet mappings by our_id (trec._id)
+    user_maps: Map<string, qbt_object_map>; // user mappings by our_id (trec.hrid)
+    jc_maps: Map<string, qbt_object_map>; // jobcode mappings by our_id (trec.cont_id)
+    qbt_ts: Map<number, qbt_timesheet>; // current QBT timesheets by qbt id
+};
+
+async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Promise<outbound_ts_cache> {
+    const map_col = mongo.get_qbt_map_objects();
+    const cont_ids = [...new Set(trecs.map((t) => t.cont_id).filter(Boolean))];
+    const hr_ids = [...new Set(trecs.map((t) => t.hrid).filter(Boolean))];
+
+    const [ts_map_docs, jc_map_docs, user_map_docs] = await Promise.all([
+        map_col.find({ type: "timesheet", our_id: { $in: trecs.map((t) => t._id) } }).toArray(),
+        map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray(),
+        map_col.find({ type: "user", our_id: { $in: hr_ids } }).toArray(),
+    ]);
+
+    // fetch_all_by_ids chunks by 100, so N per-item fetch_timesheet calls collapse to ceil(N/100).
+    const qbt_list = await fetch_all_by_ids(ts_map_docs.map((m) => m.qbt_id), (ids) => qbt.fetch_timesheets({ ids }));
+
+    return {
+        ts_maps: new Map(ts_map_docs.map((m) => [m.our_id, m])),
+        user_maps: new Map(user_map_docs.map((m) => [m.our_id, m])),
+        jc_maps: new Map(jc_map_docs.map((m) => [m.our_id, m])),
+        qbt_ts: new Map(qbt_list.map((t) => [t.id, t])),
+    };
+}
+
 // Processes a time_record and updates QBT with time record info. Returns true if it was handled
 // (pushed, created, or intentionally nothing-to-do), false if it was skipped
 // because its QBT user/jobcode mappings don't exist yet and it should be retried.
-async function process_time_record_update(trec: time_record, qbt: qbt_client): Promise<boolean> {
+// Reads come from the prefetched cache; writes are issued per item.
+async function process_time_record_update(trec: time_record, qbt: qbt_client, cache: outbound_ts_cache): Promise<boolean> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_qbt_timesheet(trec.archived_info.on);
-    const mapping = await map_col.findOne({ type: "timesheet", our_id: trec._id });
+    const mapping = cache.ts_maps.get(trec._id);
     const on_the_clock = dates_equal(trec.end, INVALID_DATETIME);
 
     // Early out for self updates (when we ingest timesheets from QBT)
@@ -346,8 +381,8 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
     }
 
     // Creating in QBT requires both user and jobcode mappings to exist.
-    const jobcode_map = await map_col.findOne({ type: "jobcode", our_id: trec.cont_id });
-    const user_map = await map_col.findOne({ type: "user", our_id: trec.hrid });
+    const jobcode_map = cache.jc_maps.get(trec.cont_id);
+    const user_map = cache.user_maps.get(trec.hrid);
     if (!jobcode_map || !user_map) {
         const jcstat = jobcode_map ? `valid (${jobcode_map.qbt_id})` : "missing";
         const usrstat = user_map ? `valid (${user_map.qbt_id})` : "missing";
@@ -378,9 +413,16 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
     };
 
     if (mapping) {
-        // We know Want is true here, because we would have early outed above if not
-        try {
-            let ts = await qbt.fetch_timesheet(mapping.qbt_id);
+        // We know Want is true here, because we would have early outed above if not.
+        // Absent from the prefetch means it was deleted on QBT — drop the stale mapping
+        // and recreate. (A real update_timesheet failure now propagates to the caller's
+        // per-item catch and floors the cursor, instead of wrongly triggering recreate.)
+        const ts = cache.qbt_ts.get(mapping.qbt_id);
+        if (!ts) {
+            wlog(`[ts] Timesheet ${mapping.qbt_id} missing on qbt - removing mapping ${mapping._id} and recreating`);
+            await map_col.deleteOne({ _id: mapping._id });
+            await do_create();
+        } else {
             const updates: Partial<qbt_timesheet> = {};
             if (!dates_equal(trec.start, ts.start)) updates.start = trec.start.toISOString();
             if (!dates_equal(trec.end, ts.end)) updates.end = !on_the_clock ? trec.end.toISOString() : "";
@@ -389,27 +431,21 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client): P
             if (jobcode_map.qbt_id !== ts.jobcode_id) updates.jobcode_id = jobcode_map.qbt_id;
 
             if (Object.keys(updates).length > 0) {
-                ts = await qbt.update_timesheet(ts.id, updates);
-                ilog(`[ts] Updated ${get_timesheet_log_str(ts)} with:`, updates);
+                const updated = await qbt.update_timesheet(ts.id, updates);
+                ilog(`[ts] Updated ${get_timesheet_log_str(updated)} with:`, updates);
 
                 // Here we gotta update our mapping last mod as well so that our ingest knows when a timesheet edit is from us
                 const qbt_update = {
                     $set: {
-                        qbt_modified: new Date(ts.last_modified),
+                        qbt_modified: new Date(updated.last_modified),
                         last_update: { by: QBT_UPDATE_BY, on: new Date() },
                     },
                 };
                 await map_col.updateOne({ _id: mapping._id }, qbt_update);
-                ilog(`[ts] Updated mapping ${mapping._id} with updated ts last mod ${ts.last_modified}`);
+                ilog(`[ts] Updated mapping ${mapping._id} with updated ts last mod ${updated.last_modified}`);
             } else {
                 ilog(`[ts] No changes`);
             }
-        } catch (err: any) {
-            wlog(
-                `[ts] Timesheet ${mapping.qbt_id} was deleted on qbt - removing mapping ${mapping._id} and recreating timesheet`
-            );
-            await map_col.deleteOne({ _id: mapping._id });
-            await do_create();
         }
     } else if (want) {
         await do_create();
@@ -428,6 +464,7 @@ export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise
         .get_trecs()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
+    const cache = await load_outbound_ts_cache(changed, qbt);
 
     const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
     for (let i = 0; i < changed.length; ++i) {
@@ -435,7 +472,7 @@ export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise
         const at = trec.last_update.on;
         ilog(`[ts] Processing update for ${get_time_record_log_str(trec)} (${i + 1} of ${changed.length})`);
         try {
-            const resolved = await process_time_record_update(trec, qbt);
+            const resolved = await process_time_record_update(trec, qbt, cache);
             if (resolved) {
                 if (at > progress.latest_resolved) progress.latest_resolved = at;
             } else if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
