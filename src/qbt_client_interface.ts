@@ -146,6 +146,9 @@ export interface qbt_client {
     fetch_timesheet(id: number): Promise<qbt_timesheet>;
     create_timesheet(data: timesheet_write_data): Promise<qbt_timesheet>;
     update_timesheet(id: number, data: Partial<timesheet_write_data>): Promise<qbt_timesheet>;
+    // QBT's delete endpoint is multi-id by default; delete_timesheets is the real
+    // shape and delete_timesheet is the single-id convenience (mirrors fetch_*).
+    delete_timesheets(ids: number[]): Promise<void>;
     delete_timesheet(id: number): Promise<void>;
 
     // Users

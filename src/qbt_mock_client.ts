@@ -98,13 +98,18 @@ export class qbt_mock_client implements qbt_client {
         return from_mock_doc<qbt_timesheet>(updated);
     }
 
+    async delete_timesheets(ids: number[]): Promise<void> {
+        if (ids.length === 0) return;
+        // Mirror QBT: the timesheets are removed from the live collection and
+        // copies recorded in timesheets-deleted.
+        const docs = await mongo.get_mock_timesheets().find({ _id: { $in: ids } }).toArray();
+        if (docs.length === 0) return;
+        await mongo.get_mock_deleted_timesheets().insertMany(docs);
+        await mongo.get_mock_timesheets().deleteMany({ _id: { $in: ids } });
+    }
+
     async delete_timesheet(id: number): Promise<void> {
-        // Mirror QBT: the timesheet is removed from the live collection and a
-        // copy is recorded in timesheets-deleted.
-        const doc = await mongo.get_mock_timesheets().findOne({ _id: id });
-        if (!doc) return;
-        await mongo.get_mock_deleted_timesheets().insertOne(doc);
-        await mongo.get_mock_timesheets().deleteOne({ _id: id });
+        await this.delete_timesheets([id]);
     }
 
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {

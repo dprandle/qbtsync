@@ -1,7 +1,8 @@
 import mongo from "./db";
 import { randomUUID } from "crypto";
+import type { AnyBulkWriteOperation } from "mongodb";
 import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
+import { create_qbt_object_map_item, QBT_UPDATE_BY, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, type qbt_timesheet } from "./qbt_client_interface";
 import { INVALID_DATETIME, is_active } from "./uobj_common";
 import { change_info } from "./uobj_common";
@@ -103,22 +104,80 @@ function dates_equal(a: Date | string, b: Date | string): boolean {
     return a_dt.getTime() === b_dt.getTime();
 }
 
-// Ingests a single inbound QBT timesheet into our time_records. Returns true if it
-// was updated (or is already up to date), false if it was skipped because the QBT
-// user/jobcode is not mapped yet and should be retried on a later pass.
-async function process_timesheet_update(ts: qbt_timesheet, qbt: qbt_client): Promise<boolean> {
+// Per-page working set for inbound processing. The maps are a read-through cache
+// pre-loaded once per page (avoiding a findOne per item); they're also written
+// through as ops are queued, so the per-item logic sees its own earlier writes.
+// The *_ops buffers and qbt_delete_ids are flushed in bulk at the end of the page.
+type inbound_batch = {
+    ts_maps: Map<number, qbt_object_map>; // timesheet mappings keyed by qbt_id
+    user_maps: Map<number, qbt_object_map>; // user mappings keyed by qbt_id
+    jc_maps: Map<number, qbt_object_map>; // jobcode mappings keyed by qbt_id
+    trecs: Map<string, time_record>; // time_records keyed by _id
+    conts: Map<string, contract_route_doc>; // contracts keyed by _id
+    trec_ops: AnyBulkWriteOperation<time_record>[];
+    map_ops: AnyBulkWriteOperation<qbt_object_map>[];
+    qbt_delete_ids: number[];
+};
+
+// Bulk-loads everything the page's items will read, in two dependency waves: the
+// three mapping sets first, then the trecs/contracts they point at.
+async function load_inbound_batch(timesheets: qbt_timesheet[]): Promise<inbound_batch> {
     const map_col = mongo.get_qbt_map_objects();
+    const ts_ids = [...new Set(timesheets.map((t) => t.id))];
+    const user_ids = [...new Set(timesheets.map((t) => t.user_id))];
+    const jc_ids = [...new Set(timesheets.map((t) => t.jobcode_id))];
+
+    const [ts_map_docs, user_map_docs, jc_map_docs] = await Promise.all([
+        map_col.find({ type: "timesheet", qbt_id: { $in: ts_ids } }).toArray(),
+        map_col.find({ type: "user", qbt_id: { $in: user_ids } }).toArray(),
+        map_col.find({ type: "jobcode", qbt_id: { $in: jc_ids } }).toArray(),
+    ]);
+
+    const [trec_docs, cont_docs] = await Promise.all([
+        mongo.get_trecs().find({ _id: { $in: ts_map_docs.map((m) => m.our_id) } }).toArray(),
+        mongo.get_conts().find({ _id: { $in: jc_map_docs.map((m) => m.our_id) } }).toArray(),
+    ]);
+
+    return {
+        ts_maps: new Map(ts_map_docs.map((m) => [m.qbt_id, m])),
+        user_maps: new Map(user_map_docs.map((m) => [m.qbt_id, m])),
+        jc_maps: new Map(jc_map_docs.map((m) => [m.qbt_id, m])),
+        trecs: new Map(trec_docs.map((t) => [t._id, t])),
+        conts: new Map(cont_docs.map((c) => [c._id, c])),
+        trec_ops: [],
+        map_ops: [],
+        qbt_delete_ids: [],
+    };
+}
+
+// Sends the queued work over the wire. Order: QBT deletes, then trecs, then maps.
+// The trec/map writes aren't cross-collection atomic (they never were per-item
+// either), but a flush failure throws and aborts the run with the cursor unsaved,
+// so the next run re-scans and the idempotent ingest reconciles. trecs-before-maps
+// keeps the worst case to a harmless orphan trec (skipped by outbound's self-update
+// guard) rather than a dangling mapping that could trigger an erroneous delete.
+async function flush_inbound_batch(batch: inbound_batch, qbt: qbt_client): Promise<void> {
+    if (batch.qbt_delete_ids.length > 0) await qbt.delete_timesheets(batch.qbt_delete_ids);
+    if (batch.trec_ops.length > 0) await mongo.get_trecs().bulkWrite(batch.trec_ops, { ordered: false });
+    if (batch.map_ops.length > 0) await mongo.get_qbt_map_objects().bulkWrite(batch.map_ops, { ordered: false });
+}
+
+// Ingests a single inbound QBT timesheet, reading from and queuing writes into the
+// page batch (no network/db I/O of its own). Returns true if it was handled (or is
+// already up to date), false if skipped because the QBT user/jobcode is not mapped
+// yet and should be retried on a later pass.
+function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): boolean {
     const incoming_modified = new Date(ts.last_modified);
-    const mapping = await map_col.findOne({ type: "timesheet", qbt_id: ts.id });
-    const trec_col = mongo.get_trecs();
+    const mapping = batch.ts_maps.get(ts.id);
 
     if (mapping && incoming_modified <= mapping.qbt_modified) {
         ilog(`[ts] Skipping timesheet - already up to date`);
+        return true;
     }
 
-    // New timesheet from QBT — reverse-map the QBT user/jobcode to our ids
-    const user_map = await map_col.findOne({ type: "user", qbt_id: ts.user_id });
-    const jobcode_map = await map_col.findOne({ type: "jobcode", qbt_id: ts.jobcode_id });
+    // Reverse-map the QBT user/jobcode to our ids.
+    const user_map = batch.user_maps.get(ts.user_id);
+    const jobcode_map = batch.jc_maps.get(ts.jobcode_id);
     if (!user_map || !jobcode_map) {
         const jcstat = jobcode_map ? `ok (${jobcode_map.qbt_id})` : "missing";
         const usrstat = user_map ? `ok (${user_map.qbt_id})` : "missing";
@@ -129,11 +188,12 @@ async function process_timesheet_update(ts: qbt_timesheet, qbt: qbt_client): Pro
     }
 
     if (mapping) {
-        const trec = await trec_col.findOne({ _id: mapping.our_id });
+        const trec = batch.trecs.get(mapping.our_id);
         if (!trec) {
-            await qbt.delete_timesheet(mapping.qbt_id);
-            await map_col.deleteOne({ _id: mapping._id });
-            ilog(`[ts] Deleted ${mapping._id} and associated mapping ${mapping._id} - trec removed`);
+            batch.qbt_delete_ids.push(mapping.qbt_id);
+            batch.map_ops.push({ deleteOne: { filter: { _id: mapping._id } } });
+            batch.ts_maps.delete(ts.id);
+            ilog(`[ts] Deleting qbt ${mapping.qbt_id} and mapping ${mapping._id} - trec removed`);
             return true;
         }
 
@@ -147,27 +207,30 @@ async function process_timesheet_update(ts: qbt_timesheet, qbt: qbt_client): Pro
         }
 
         if (Object.keys(updates).length > 0) {
-            await trec_col.updateOne({ _id: trec._id }, updates);
+            batch.trec_ops.push({ updateOne: { filter: { _id: trec._id }, update: { $set: updates } } });
+            Object.assign(trec, updates);
             ilog(`[ts] Updated ${get_time_record_log_str(trec)} with:`, updates);
         } else {
             ilog(`[ts] No changes`);
         }
 
-        const map_update = {
-            $set: {
-                qbt_modified: incoming_modified,
-                last_update: { by: QBT_UPDATE_BY, on: new Date() },
+        batch.map_ops.push({
+            updateOne: {
+                filter: { _id: mapping._id },
+                update: { $set: { qbt_modified: incoming_modified, last_update: { by: QBT_UPDATE_BY, on: new Date() } } },
             },
-        };
-        await map_col.updateOne({ type: "timesheet", qbt_id: ts.id }, map_update);
+        });
+        mapping.qbt_modified = incoming_modified;
         ilog(`[ts] Updated mapping ${mapping._id} with updated ts last mod ${ts.last_modified}`);
     } else {
-        const cont = await mongo.get_conts().findOne({ _id: jobcode_map.our_id });
+        const cont = batch.conts.get(jobcode_map.our_id);
         if (!cont) throw Error("Failed to fetch contract with id " + jobcode_map.our_id);
         const trec = timesheet_to_time_record(ts, user_map.our_id, cont);
-        await trec_col.insertOne(trec);
+        batch.trec_ops.push({ insertOne: { document: trec } });
+        batch.trecs.set(trec._id, trec);
         const map_obj = create_qbt_object_map_item(ts.id, trec._id, "timesheet", incoming_modified);
-        await map_col.insertOne(map_obj);
+        batch.map_ops.push({ insertOne: { document: map_obj } });
+        batch.ts_maps.set(ts.id, map_obj);
         ilog(`[ts] Created:`, trec, `and associated mapping ${map_obj._id}`);
     }
     return true;
@@ -179,18 +242,21 @@ async function process_inbound_page(
     qbt: qbt_client
 ): Promise<cursor_progress> {
     let { latest_resolved, earliest_unresolved } = progress;
+    const batch = await load_inbound_batch(timesheets);
 
     for (let i = 0; i < timesheets.length; ++i) {
         const ts = timesheets[i];
         const mod = new Date(ts.last_modified);
         ilog(`[ts] Processing update for ${get_timesheet_log_str(ts)} (${i + 1} of ${timesheets.length})`);
-        const resolved = await process_timesheet_update(ts, qbt);
+        const resolved = process_timesheet_update(ts, batch);
         if (resolved) {
             if (mod > latest_resolved) latest_resolved = mod;
         } else if (!earliest_unresolved || mod < earliest_unresolved) {
             earliest_unresolved = mod;
         }
     }
+
+    await flush_inbound_batch(batch, qbt);
     return { latest_resolved, earliest_unresolved };
 }
 

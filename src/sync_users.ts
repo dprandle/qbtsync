@@ -62,6 +62,7 @@ async function bootstrap_users_loop(
             const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
             if (existing) {
                 ilog(`[usi] Already matched ${get_user_log_str(qusr)} to hres ${existing.our_id} - skipping`);
+                continue;
             }
 
             const normalized_usr_email = normalize_email(qusr.email);
