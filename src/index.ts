@@ -1,7 +1,8 @@
 import "./global_setup";
 import { config } from "./config";
 import mongo from "./db";
-import { reset_sync_state, ensure_state_file_writable } from "./sync_state";
+import { reset_sync_state, ensure_state_file_writable, cleanup_due, save_cleanup_state } from "./sync_state";
+import { run_qbt_mapping_cleanup } from "./qbt_mapping_cleanup";
 import { update_time_recs_from_timesheets, update_timesheets_from_time_recs } from "./sync_timesheets";
 import { update_users_from_hres, bootstrap_users } from "./sync_users";
 import { update_jobcodes_from_contracts, bootstrap_jobcodes } from "./sync_jobcodes";
@@ -57,6 +58,18 @@ async function run_sync_loop(qbt: qbt_client): Promise<void> {
             await sync_timesheets_once(qbt);
         } catch (err) {
             elog("[ts] Pass error:", err);
+        }
+        // Cleanup runs last, with the other passes provably idle (single loop), and
+        // only every config.mapping_cleanup_interval_ms. last_run is stamped only on a
+        // clean completion, so an error retries next tick rather than waiting a full
+        // interval; per-batch failures inside the pass are logged and don't throw.
+        if (cleanup_due(new Date())) {
+            try {
+                await run_qbt_mapping_cleanup(qbt);
+                save_cleanup_state({ last_run: new Date() });
+            } catch (err) {
+                elog("[cleanup] Pass error:", err);
+            }
         }
         tick++;
         await sleep(config.timesheet_sync_interval_ms);

@@ -19,10 +19,19 @@ export type jobcode_sync_state = {
     last_synced: Date | null; // contract_route last_update.on cursor
 };
 
+export type cleanup_state = {
+    // Wall-clock time the last full qbt-object-map cleanup completed. Persisted (not
+    // an in-memory tick counter) so the rare cleanup cadence survives restarts: a
+    // process that restarts more often than the cleanup interval would otherwise
+    // either re-run on every startup or never reach an in-memory threshold.
+    last_run: Date | null;
+};
+
 export type sync_state = {
     timesheets: timesheet_sync_state;
     users: user_sync_state;
     jobcodes: jobcode_sync_state;
+    cleanup: cleanup_state;
 };
 
 
@@ -38,6 +47,9 @@ const default_state: sync_state = {
     jobcodes: {
         bootstrap_complete: false,
         last_synced: null,
+    },
+    cleanup: {
+        last_run: null,
     },
 };
 
@@ -56,6 +68,9 @@ function parse_dates(state: any): sync_state {
         jobcodes: {
             bootstrap_complete: state.jobcodes?.bootstrap_complete ?? false,
             last_synced: state.jobcodes?.last_synced ? new Date(state.jobcodes.last_synced) : null,
+        },
+        cleanup: {
+            last_run: state.cleanup?.last_run ? new Date(state.cleanup.last_run) : null,
         },
     };
 }
@@ -111,6 +126,20 @@ export function save_jobcode_state(update: Partial<jobcode_sync_state>): void {
     const state = get_sync_state();
     state.jobcodes = { ...state.jobcodes, ...update };
     write_state(state);
+}
+
+export function save_cleanup_state(update: Partial<cleanup_state>): void {
+    const state = get_sync_state();
+    state.cleanup = { ...state.cleanup, ...update };
+    write_state(state);
+}
+
+// True when the full mapping cleanup is due: never run before, or the configured
+// interval has elapsed since the last completed run.
+export function cleanup_due(now: Date): boolean {
+    const last = get_sync_state().cleanup.last_run;
+    if (!last) return true;
+    return now.getTime() - last.getTime() >= config.mapping_cleanup_interval_ms;
 }
 
 // Tracks per-item sync progress so the cursor only advances past items that

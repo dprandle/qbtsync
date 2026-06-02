@@ -31,4 +31,9 @@ export const config = {
     // tick keeps that shared state deterministic and free of interleaving. N=1
     // reconciles entities on every tick (the previous equal-interval behavior).
     entity_sync_every_n_ticks: optional_int("ENTITY_SYNC_EVERY_N_TICKS", 1),
+    // How often the full qbt-object-map cleanup runs (wall-clock, checked against
+    // the persisted last_run so it survives restarts). This is a reconciliation
+    // safety net for hard-deletes the delta loops structurally can't see, so it's
+    // meant to run rarely. Default: 7 days.
+    mapping_cleanup_interval_ms: optional_int("MAPPING_CLEANUP_INTERVAL_MS", 7 * 24 * 60 * 60 * 1000),
 };
