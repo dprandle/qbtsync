@@ -1,8 +1,8 @@
 import mongo from "./db";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { QBT_UPDATE_BY, create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
-import { change_info, is_active } from "./uobj_common";
+import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
+import { change_info, is_active, make_ci_now } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
 import { ask_yes_no } from "./util";
@@ -170,7 +170,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
             const qbt_update = {
                 $set: {
                     qbt_modified: new Date(usi.last_modified),
-                    last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                    last_update: make_ci_now(),
                 },
             };
             await map_col.updateOne({ _id: mapping._id }, qbt_update);

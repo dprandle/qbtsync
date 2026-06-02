@@ -46,7 +46,7 @@ function get_mock_db(): Db {
 }
 
 function get_trecs(): Collection<time_record> {
-    return db.collection<time_record>("time_records");
+    return db.collection<time_record>("time_record");
 }
 
 function get_qbt_map_objects(): Collection<qbt_object_map> {

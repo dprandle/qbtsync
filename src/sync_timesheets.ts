@@ -1,10 +1,9 @@
 import mongo from "./db";
-import { randomUUID } from "crypto";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item, QBT_UPDATE_BY, type qbt_object_map } from "./qbt_object_map";
+import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_interface";
-import { INVALID_DATETIME, is_active } from "./uobj_common";
+import { INVALID_DATETIME, QBT_UPDATE_BY, changed_by_us, is_active, make_ci_not_archived, make_ci_now } from "./uobj_common";
 import { change_info } from "./uobj_common";
 import { contract_route_doc } from "./sync_jobcodes";
 import { config } from "./config";
@@ -82,12 +81,13 @@ function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: cont
     const now = new Date();
     const start = new Date(ts.start);
     const end = ts.end ? new Date(ts.end) : INVALID_DATETIME;
+    const ci = make_ci_now(` (${ts.location})`);
     return {
-        _id: randomUUID(),
+        _id: ts.id.toString(),
         custom_params: {},
-        archived_info: { by: "", on: INVALID_DATETIME },
-        last_update: { by: `${QBT_UPDATE_BY} (${ts.location})`, on: now },
-        created: { by: `${QBT_UPDATE_BY} (${ts.location})`, on: now },
+        archived_info: make_ci_not_archived(),
+        last_update: ci,
+        created: ci,
         schema_version: TIME_RECORD_SCHEMA_VERSION,
         hrid: hres_id,
         cont_id: cont._id,
@@ -220,7 +220,7 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
         batch.map_ops.push({
             updateOne: {
                 filter: { _id: mapping._id },
-                update: { $set: { qbt_modified: incoming_modified, last_update: { by: QBT_UPDATE_BY, on: new Date() } } },
+                update: { $set: { qbt_modified: incoming_modified, last_update: make_ci_now() } },
             },
         });
         mapping.qbt_modified = incoming_modified;
@@ -368,7 +368,7 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
     const on_the_clock = dates_equal(trec.end, INVALID_DATETIME);
 
     // Early out for self updates (when we ingest timesheets from QBT)
-    if (trec.last_update.by.includes(QBT_UPDATE_BY)) {
+    if (changed_by_us(trec.last_update)) {
         ilog(`[ts] Skipping trec - update is from ourself`);
         return true;
     }
@@ -392,15 +392,14 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
         return true;
     }
 
-    // Creating in QBT requires both user and jobcode mappings to exist.
+    // Creating in QBT requires both user and jobcode mappings to exist. If they don't its most likely a subcontractor timesheet
     const jobcode_map = cache.jc_maps.get(trec.cont_id);
     const user_map = cache.user_maps.get(trec.hrid);
     if (!jobcode_map || !user_map) {
-        const jcstat = jobcode_map ? `valid (${jobcode_map.qbt_id})` : "missing";
-        const usrstat = user_map ? `valid (${user_map.qbt_id})` : "missing";
-        wlog(`[ts] Skipping without cursor advance - waiting on map entries -- jc: ${jcstat} | usr: ${usrstat}`);
-        // Not synced yet; retry on a later pass after the user/jobcode syncs run.
-        return false;
+        const jcstat = jobcode_map ? `valid (${jobcode_map.qbt_id})` : `missing (${trec.cont_id})`;
+        const usrstat = user_map ? `valid (${user_map.qbt_id})` : `missing (${trec.hrid})`;
+        wlog(`[ts] Skipping with cursor advance - no usr and/or jc - probably subc trec -- jc: ${jcstat} | usr: ${usrstat}`);
+        return true;
     }
 
     const do_create = async () => {
@@ -450,7 +449,7 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
                 const qbt_update = {
                     $set: {
                         qbt_modified: new Date(updated.last_modified),
-                        last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                        last_update: make_ci_now(),
                     },
                 };
                 await map_col.updateOne({ _id: mapping._id }, qbt_update);

@@ -1,9 +1,9 @@
 import mongo from "./db";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item, QBT_UPDATE_BY, type qbt_object_map } from "./qbt_object_map";
+import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
-import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
+import { change_info, find_value_change_item, INVALID_IND, is_active, make_ci_now, value_change_item } from "./uobj_common";
 import { is_awarded, EMP_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
 import { ask_yes_no } from "./util";
 
@@ -202,7 +202,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
             const qbt_update = {
                 $set: {
                     qbt_modified: new Date(jci.last_modified),
-                    last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                    last_update: make_ci_now(),
                 },
             };
             await map_col.updateOne({ _id: mapping._id }, qbt_update);
