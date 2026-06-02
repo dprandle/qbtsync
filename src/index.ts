@@ -1,10 +1,10 @@
-import "./global_setup"
+import "./global_setup";
 import { config } from "./config";
 import mongo from "./db";
 import { get_sync_state, reset_sync_state, ensure_state_file_writable } from "./sync_state";
-import { full_import, incremental_sync, outbound_sync } from "./sync_timesheets";
-import { sync_users, bootstrap_users } from "./sync_users";
-import { sync_jobcodes, bootstrap_jobcodes } from "./sync_jobcodes";
+import { full_import, update_time_recs_from_timesheets, update_timesheets_from_time_recs } from "./sync_timesheets";
+import { update_users_from_hres, bootstrap_users } from "./sync_users";
+import { update_jobcodes_from_contracts, bootstrap_jobcodes } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
@@ -20,8 +20,8 @@ async function run_timesheet_loop(qbt: qbt_client): Promise<void> {
     ilog(`[ts] Starting sync loop (inbound: ${config.timesheet_sync_interval_ms}ms)`);
     while (true) {
         try {
-            await incremental_sync(qbt);
-            await outbound_sync(qbt);
+            await update_time_recs_from_timesheets(qbt);
+            await update_timesheets_from_time_recs(qbt);
         } catch (err) {
             elog("[ts] Loop error:", err);
         }
@@ -39,8 +39,8 @@ async function run_entity_loop(qbt: qbt_client): Promise<void> {
     ilog(`[entity] Starting users+jobcodes sync loop (interval: ${config.entity_sync_interval_ms}ms)`);
     while (true) {
         try {
-            await sync_users(qbt);
-            await sync_jobcodes(qbt);
+            await update_users_from_hres(qbt);
+            await update_jobcodes_from_contracts(qbt);
         } catch (err) {
             elog("[entity] Loop error:", err);
         }
@@ -84,10 +84,7 @@ async function main(): Promise<void> {
         }
 
         ilog("[startup] Initial sync complete — starting periodic loops.");
-        await Promise.all([
-            run_timesheet_loop(qbt),
-            run_entity_loop(qbt),
-        ]);
+        await Promise.all([run_timesheet_loop(qbt), run_entity_loop(qbt)]);
     } finally {
         await mongo.disconnect();
     }

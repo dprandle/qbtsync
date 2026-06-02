@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item } from "./qbt_object_map";
+import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
 import { is_awarded, EMP_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
@@ -91,9 +91,7 @@ async function bootstrap_jobcodes_loop(
                 qbt_id: jc.id,
             });
             if (existing) {
-                ilog(
-                    `[jc] Already matched jobcode ${get_jobcode_log_str(jc)} to contract id ${existing.our_id} - skipping`
-                );
+                ilog(`[jc] Already matched ${get_jobcode_log_str(jc)} to contract ${existing.our_id} - skipping`);
                 continue;
             }
 
@@ -110,16 +108,14 @@ async function bootstrap_jobcodes_loop(
 
             if (already_mapped) {
                 ilog(
-                    `[jc] Found match ${get_contract_log_str(match)} for jc ${get_jobcode_log_str(jc)} but contract already linked to jc ${already_mapped.qbt_id}`
+                    `[jc] Found match ${get_contract_log_str(match)} for ${get_jobcode_log_str(jc)} but contract already linked to ${already_mapped.qbt_id}`
                 );
                 continue;
             }
 
             const map_obj = create_qbt_object_map_item(jc.id, match._id, "jobcode", new Date(jc.last_modified));
             await map_col.insertOne(map_obj);
-            ilog(
-                `[jc] Bootstrap mapped contract ${get_contract_log_str(match)} → QBT jobcode ${get_jobcode_log_str(jc)}`
-            );
+            ilog(`[jc] Bootstrap mapped contract ${get_contract_log_str(match)} → ${get_jobcode_log_str(jc)}`);
         }
 
         if (!more) break;
@@ -130,7 +126,7 @@ async function bootstrap_jobcodes_loop(
 
 export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     if (get_sync_state().jobcodes.bootstrap_complete) return;
-    ilog("[jc] Running bootstrap: matching QBT jobcodes to contracts by route name...");
+    ilog("[jc] Running bootstrap: matching jobcodes to contracts by route name...");
 
     // Load all contracts to search against
     const all_contracts = await mongo.get_conts().find({}).toArray();
@@ -142,7 +138,7 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     const active_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "yes");
     const archived_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "no");
     for (const jc of archived_nomatches) {
-        ilog(`[jc] Could not find matching contract for archived jobcode ${get_jobcode_log_str(jc)}`);
+        ilog(`[jc] Could not find matching contract for archived ${get_jobcode_log_str(jc)}`);
     }
 
     for (let i = 0; i < active_nomatches.length; ++i) {
@@ -151,7 +147,7 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
         );
         if (answer) {
             const result = await qbt.update_jobcode(active_nomatches[i].id, { active: false });
-            ilog(`[jc] Updated jobcode ${get_jobcode_log_str(result)} to ${result.active ? "active" : "archived"}`);
+            ilog(`[jc] Updated ${get_jobcode_log_str(result)} to ${result.active ? "active" : "archived"}`);
         }
     }
 
@@ -183,7 +179,17 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         }
         if (Object.keys(updates).length > 0) {
             jci = await qbt.update_jobcode(jci.id, updates);
-            ilog(`[jc] Updated jobcode ${get_jobcode_log_str(jci)} with:`, updates);
+            ilog(`[jc] Updated ${get_jobcode_log_str(jci)} with:`, updates);
+
+            // We don't really HAVE to update the mapping, but it could help with debugging to see that our mod dates match
+            const qbt_update = {
+                $set: {
+                    qbt_modified: new Date(jci.last_modified),
+                    last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                },
+            };
+            await map_col.updateOne({ _id: mapping._id }, qbt_update);
+            ilog(`[jc] Updated mapping ${mapping._id} with updated jc last mod ${jci.last_modified}`);
         } else {
             ilog(`[jc] No changes`);
         }
@@ -194,7 +200,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         });
         const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
         await map_col.insertOne(new_map_obj);
-        ilog(`[jc] Created jobcode:`, jci);
+        ilog(`[jc] Created:`, jci, `and associated mapping ${new_map_obj._id}`);
     } else {
         ilog(`[jc] No changes`);
     }
@@ -223,7 +229,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     await reconcile_jc_assignments_by_jobcode(qbt, jci.id, desired);
 }
 
-export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
+export async function update_jobcodes_from_contracts(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
     const since = state.jobcodes.last_synced ?? CURSOR_EPOCH;
     ilog(`[jc] Delta sync since ${since.toISOString()}`);
@@ -242,7 +248,7 @@ export async function sync_jobcodes(qbt: qbt_client): Promise<void> {
             await process_contract_update(cont, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
-            elog(`[jc] Error syncing contract ${cont._id}:`, err);
+            elog(`[jc] Error syncing contract ${get_contract_log_str(cont)}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
             }

@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item } from "./qbt_object_map";
+import { QBT_UPDATE_BY, create_qbt_object_map_item } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
@@ -61,7 +61,7 @@ async function bootstrap_users_loop(
             // If we already have an entry for this user, skip it
             const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
             if (existing) {
-                ilog(`[usi] Already matched user ${get_user_log_str(qusr)} to hres id ${existing.our_id} - skipping`);
+                ilog(`[usi] Already matched ${get_user_log_str(qusr)} to hres ${existing.our_id} - skipping`);
             }
 
             const normalized_usr_email = normalize_email(qusr.email);
@@ -76,15 +76,13 @@ async function bootstrap_users_loop(
 
             const already_mapped = await map_col.findOne({ type: "user", our_id: hres._id });
             if (already_mapped) {
-                ilog(
-                    `[usi] Found match ${get_hres_log_str(hres)} but hres already linked to qbt user ${already_mapped.qbt_id}`
-                );
+                ilog(`[usi] Found match ${get_hres_log_str(hres)} but hres already linked to ${already_mapped.qbt_id}`);
                 continue;
             }
 
             const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
             await map_col.insertOne(map_obj);
-            ilog(`[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → QBT user ${get_user_log_str(qusr)}`);
+            ilog(`[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → ${get_user_log_str(qusr)}`);
         }
         if (!more) break;
         page++;
@@ -94,7 +92,7 @@ async function bootstrap_users_loop(
 
 export async function bootstrap_users(qbt: qbt_client): Promise<void> {
     if (get_sync_state().users.bootstrap_complete) return;
-    ilog("[usi] Running bootstrap: matching QBT users to hresources by email...");
+    ilog("[usi] Running bootstrap: matching users to hresources by email...");
     const all_hres = await mongo.get_hres().find({}).toArray();
 
     // Create faster lookup table
@@ -103,7 +101,7 @@ export async function bootstrap_users(qbt: qbt_client): Promise<void> {
     const active_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "yes");
     const archived_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "no");
     for (const u of archived_nomatches) {
-        ilog(`[usi] Could not find matching hres for archived tsuser ${get_user_log_str(u)}`);
+        ilog(`[usi] Could not find matching hres for archived ${get_user_log_str(u)}`);
     }
 
     for (let i = 0; i < active_nomatches.length; ++i) {
@@ -112,7 +110,7 @@ export async function bootstrap_users(qbt: qbt_client): Promise<void> {
         );
         if (answer) {
             const result = await qbt.update_user(active_nomatches[i].id, { active: false });
-            ilog(`[usi] Updated user ${get_user_log_str(result)} to ${result.active ? "active" : "archived"}`);
+            ilog(`[usi] Updated ${get_user_log_str(result)} to ${result.active ? "active" : "archived"}`);
         }
     }
 
@@ -146,7 +144,17 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         }
         if (Object.keys(updates).length > 0) {
             usi = await qbt.update_user(usi.id, updates);
-            ilog(`[usi] Updated user ${get_user_log_str(usi)} with:`, updates);
+            ilog(`[usi] Updated ${get_user_log_str(usi)} with:`, updates);
+
+            // We don't really HAVE to update the mapping, but it could help with debugging to see that our mod dates match
+            const qbt_update = {
+                $set: {
+                    qbt_modified: new Date(usi.last_modified),
+                    last_update: { by: QBT_UPDATE_BY, on: new Date() },
+                },
+            };
+            await map_col.updateOne({ _id: mapping._id }, qbt_update);
+            ilog(`[usi] Updated mapping ${mapping._id} with updated usi last mod ${usi.last_modified}`);
         } else {
             ilog(`[usi] No changes`);
         }
@@ -162,7 +170,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
         });
         const map_obj = create_qbt_object_map_item(usi.id, hres._id, "user", new Date(usi.last_modified));
         await map_col.insertOne(map_obj);
-        ilog(`[usi] Created user:`, usi);
+        ilog(`[usi] Created:`, usi, `and associated mapping ${map_obj._id}`);
     } else {
         ilog(`[usi] No changes`);
     }
@@ -171,7 +179,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     if (!usi) return;
     if (!usi.active) {
         ilog(
-            `[jca] Starting sync - archiving any assignments for ${get_hres_log_str(hres)} (usi: ${get_user_log_str(usi)})`
+            `[jca] Starting sync - archiving any assignments for ${get_hres_log_str(hres)} (${get_user_log_str(usi)})`
         );
         await reconcile_jc_assignments_by_user(qbt, usi.id, new Set());
         return;
@@ -197,7 +205,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     await reconcile_jc_assignments_by_user(qbt, usi.id, desired);
 }
 
-export async function sync_users(qbt: qbt_client): Promise<void> {
+export async function update_users_from_hres(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
     const since = state.users.last_synced ?? CURSOR_EPOCH;
     ilog(`[usi] Delta sync since ${since.toISOString()}`);
@@ -217,7 +225,7 @@ export async function sync_users(qbt: qbt_client): Promise<void> {
             await process_hres_update(hres, qbt);
             if (at > progress.latest_resolved) progress.latest_resolved = at;
         } catch (err) {
-            elog(`[usi] Error syncing hres ${hres._id}:`, err);
+            elog(`[usi] Error syncing hres ${get_hres_log_str(hres)}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
             }
