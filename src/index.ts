@@ -1,15 +1,14 @@
 import "./global_setup";
 import { config } from "./config";
 import mongo from "./db";
-import { get_sync_state, reset_sync_state, ensure_state_file_writable } from "./sync_state";
-import { full_import, update_time_recs_from_timesheets, update_timesheets_from_time_recs } from "./sync_timesheets";
+import { reset_sync_state, ensure_state_file_writable } from "./sync_state";
+import { update_time_recs_from_timesheets, update_timesheets_from_time_recs } from "./sync_timesheets";
 import { update_users_from_hres, bootstrap_users } from "./sync_users";
 import { update_jobcodes_from_contracts, bootstrap_jobcodes } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
 
-const force_full_import = process.argv.includes("--full-import");
 const do_reset = process.argv.includes("--reset");
 
 function sleep(ms: number): Promise<void> {
@@ -78,12 +77,10 @@ async function main(): Promise<void> {
         await bootstrap_jobcodes(qbt);
         await bootstrap_users(qbt);
 
-        const state = get_sync_state();
-        if (force_full_import || !state.timesheets.full_import_complete) {
-            await full_import(qbt);
-        }
-
-        ilog("[startup] Initial sync complete — starting periodic loops.");
+        // The first inbound timesheet pass (cursor = CURSOR_EPOCH) performs the
+        // historical backfill bounded by config.timesheet_start_date; no separate
+        // full-import step is needed.
+        ilog("[startup] Bootstraps complete — starting periodic loops.");
         await Promise.all([run_timesheet_loop(qbt), run_entity_loop(qbt)]);
     } finally {
         await mongo.disconnect();

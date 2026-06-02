@@ -105,11 +105,8 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
             on_the_clock: "both"
         };
-        if (opts.modified_since) {
-            params["modified_since"] = opts.modified_since.toISOString();
-        } else if (!opts.ids?.length) {
-            params["start_date"] = config.timesheet_start_date;
-        }
+        if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (!opts.ids?.length) params["start_date"] = config.timesheet_start_date;
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/timesheets", params)) as qbt_timesheets_response;
         return { items: Object.values(data.results.timesheets), more: data.more };

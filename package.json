@@ -8,7 +8,6 @@
     "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
     "seed_mock_db": "npm run build && node dist/seed_mock_db.js",
     "start": "npm run build && node dist/index.js",
-    "migrate": "npm run build && node dist/index.js --full-import",
     "reset": "npm run build && node dist/index.js --reset",
     "wipe": "npm run build && node dist/index.js --reset"
   },

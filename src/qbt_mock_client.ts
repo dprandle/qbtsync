@@ -56,11 +56,8 @@ export class qbt_mock_client implements qbt_client {
         const col = mongo.get_mock_timesheets();
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
-        if (opts.modified_since) {
-            filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
-        } else if (!opts.ids?.length) {
-            filter["start"] = { $gte: config.timesheet_start_date };
-        }
+        if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
+        if (!opts.ids?.length) filter["start"] = { $gte: config.timesheet_start_date };
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await col
             .find(filter)

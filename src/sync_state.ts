@@ -5,9 +5,7 @@ import { config } from "./config";
 const STATE_FILE = config.sync_state_file;
 
 export type timesheet_sync_state = {
-    full_import_complete: boolean;
     last_synced: Date | null; // inbound cursor: QBT modified_since
-    full_import_page: number;
     outbound_last_synced: Date | null; // outbound cursor: time_records last_update.on
 };
 
@@ -30,9 +28,7 @@ export type sync_state = {
 
 const default_state: sync_state = {
     timesheets: {
-        full_import_complete: false,
         last_synced: null,
-        full_import_page: 1,
         outbound_last_synced: null,
     },
     users: {
@@ -48,9 +44,7 @@ const default_state: sync_state = {
 function parse_dates(state: any): sync_state {
     return {
         timesheets: {
-            full_import_complete: state.timesheets?.full_import_complete ?? false,
             last_synced: state.timesheets?.last_synced ? new Date(state.timesheets.last_synced) : null,
-            full_import_page: state.timesheets?.full_import_page ?? 1,
             outbound_last_synced: state.timesheets?.outbound_last_synced
                 ? new Date(state.timesheets.outbound_last_synced)
                 : null,

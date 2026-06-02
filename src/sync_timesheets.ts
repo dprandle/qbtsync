@@ -193,31 +193,14 @@ async function process_inbound_page(
     return { latest_resolved, earliest_unresolved };
 }
 
-export async function full_import(qbt: qbt_client): Promise<void> {
-    ilog("[ts] Starting full import...");
-    const state = get_sync_state();
-    let page = state.timesheets.full_import_page;
-    const since = state.timesheets.last_synced ?? CURSOR_EPOCH;
-    let progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
-
-    while (true) {
-        const { items: timesheets, more } = await qbt.fetch_timesheets({ page });
-        ilog(`[ts] Fetched page ${page} with ${timesheets.length} timesheets`);
-
-        if (timesheets.length === 0) break;
-
-        progress = await process_inbound_page(timesheets, progress, qbt);
-
-        save_timesheet_state({ full_import_page: page, last_synced: safe_cursor(progress, since) });
-
-        if (!more) break;
-        page++;
-    }
-
-    save_timesheet_state({ full_import_complete: true, full_import_page: 1 });
-    ilog("[ts] Full import complete.");
-}
-
+// Inbound sync of QBT timesheets into our time_records. Every fetch is bounded by
+// config.timesheet_start_date (work-date floor, applied by the client) and by the
+// modified_since cursor; on the first run the cursor is CURSOR_EPOCH, so this also
+// performs the initial historical backfill. The cursor is only persisted at the
+// end of a completed run — a crash mid-backfill leaves it untouched so the next
+// run re-scans from scratch (ingest is idempotent). Advancing it per page would be
+// unsafe: pages are not ordered by last_modified, so a page with a recent max
+// would jump the cursor past older-modified rows on pages not yet fetched.
 export async function update_time_recs_from_timesheets(qbt: qbt_client): Promise<void> {
     const state = get_sync_state();
     const modified_since = state.timesheets.last_synced ?? CURSOR_EPOCH;
