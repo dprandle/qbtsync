@@ -1,4 +1,4 @@
-import { MongoClient, Db, Collection } from "mongodb";
+import { MongoClient, Db, Collection, ClientSession } from "mongodb";
 import { config } from "./config";
 import { type time_record } from "./sync_timesheets";
 import { type qbt_object_map } from "./qbt_object_map";
@@ -28,6 +28,13 @@ async function connect(): Promise<void> {
 
 async function disconnect(): Promise<void> {
     await client.close();
+}
+
+// Runs fn inside a multi-document transaction. withTransaction may re-invoke fn on
+// transient errors, so fn must be safe to retry (ours just re-issues buffered bulk
+// ops). Requires a replica set / mongos — standalone mongod will throw.
+async function with_transaction<T>(fn: (session: ClientSession) => Promise<T>): Promise<T> {
+    return client.withSession((session) => session.withTransaction((s) => fn(s)));
 }
 
 function get_db(): Db {
@@ -79,6 +86,7 @@ function get_mock_deleted_timesheets(): Collection<mock_qbt_timesheet> {
 const mongo = {
     connect,
     disconnect,
+    with_transaction,
     get_db,
     get_mock_db,
     get_trecs,

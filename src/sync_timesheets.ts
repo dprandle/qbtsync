@@ -150,16 +150,19 @@ async function load_inbound_batch(timesheets: qbt_timesheet[]): Promise<inbound_
     };
 }
 
-// Sends the queued work over the wire. Order: QBT deletes, then trecs, then maps.
-// The trec/map writes aren't cross-collection atomic (they never were per-item
-// either), but a flush failure throws and aborts the run with the cursor unsaved,
-// so the next run re-scans and the idempotent ingest reconciles. trecs-before-maps
-// keeps the worst case to a harmless orphan trec (skipped by outbound's self-update
-// guard) rather than a dangling mapping that could trigger an erroneous delete.
+// Sends the queued work over the wire. QBT deletes go first (they can't be part of
+// the Mongo transaction); doing them before commit means the worst case is a harmless
+// orphan mapping rather than a resurrected timesheet. The trec and map writes then
+// commit together in one transaction, so a failure leaves no partial state — the run
+// aborts with the cursor unsaved and the next (idempotent) re-scan reconciles. Per
+// page this is at most ~100 timesheets, so the transaction stays well within limits.
 async function flush_inbound_batch(batch: inbound_batch, qbt: qbt_client): Promise<void> {
     if (batch.qbt_delete_ids.length > 0) await qbt.delete_timesheets(batch.qbt_delete_ids);
-    if (batch.trec_ops.length > 0) await mongo.get_trecs().bulkWrite(batch.trec_ops, { ordered: false });
-    if (batch.map_ops.length > 0) await mongo.get_qbt_map_objects().bulkWrite(batch.map_ops, { ordered: false });
+    if (batch.trec_ops.length === 0 && batch.map_ops.length === 0) return;
+    await mongo.with_transaction(async (session) => {
+        if (batch.trec_ops.length > 0) await mongo.get_trecs().bulkWrite(batch.trec_ops, { session });
+        if (batch.map_ops.length > 0) await mongo.get_qbt_map_objects().bulkWrite(batch.map_ops, { session });
+    });
 }
 
 // Ingests a single inbound QBT timesheet, reading from and queuing writes into the
