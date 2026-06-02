@@ -1,6 +1,7 @@
 import mongo from "./db";
+import type { AnyBulkWriteOperation } from "mongodb";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { QBT_UPDATE_BY, create_qbt_object_map_item } from "./qbt_object_map";
+import { QBT_UPDATE_BY, create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
 import { change_info, is_active } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
@@ -57,34 +58,52 @@ async function bootstrap_users_loop(
         const { items: users, more } = await qbt.fetch_users({ page, active });
         ilog(`[usi] Trying to match ${users.length} ${active === "yes" ? "active" : "archived"} users to hres`);
 
+        // Match emails up front (cheap, in-memory) so we know which hres ids to prefetch.
+        const matched_hres = new Map<number, hresource_doc>(); // qbt user id -> hres
+        for (const qusr of users) {
+            const hres = hres_by_email.get(normalize_email(qusr.email)) ?? hres_by_email.get(normalize_email(qusr.username));
+            if (hres) matched_hres.set(qusr.id, hres);
+        }
+
+        // Prefetch existing mappings for this page: by qbt_id (this QBT user already
+        // linked) and by our_id (this hres already linked). linked_our is written
+        // through below so two QBT users matching the same hres in one page don't both
+        // insert — that would violate the unique (type, our_id) index and abort the txn.
+        const [by_qbt_docs, by_our_docs] = await Promise.all([
+            map_col.find({ type: "user", qbt_id: { $in: users.map((u) => u.id) } }).toArray(),
+            map_col.find({ type: "user", our_id: { $in: [...new Set([...matched_hres.values()].map((h) => h._id))] } }).toArray(),
+        ]);
+        const linked_qbt = new Map(by_qbt_docs.map((m) => [m.qbt_id, m]));
+        const linked_our = new Map(by_our_docs.map((m) => [m.our_id, m]));
+        const inserts: AnyBulkWriteOperation<qbt_object_map>[] = [];
+
         for (const qusr of users) {
             // If we already have an entry for this user, skip it
-            const existing = await map_col.findOne({ type: "user", qbt_id: qusr.id });
+            const existing = linked_qbt.get(qusr.id);
             if (existing) {
                 ilog(`[usi] Already matched ${get_user_log_str(qusr)} to hres ${existing.our_id} - skipping`);
                 continue;
             }
 
-            const normalized_usr_email = normalize_email(qusr.email);
-            const normalized_username = normalize_email(qusr.username);
-
-            let hres = hres_by_email.get(normalized_usr_email);
-            if (!hres) hres = hres_by_email.get(normalized_username);
+            const hres = matched_hres.get(qusr.id);
             if (!hres) {
                 nomatches.push(qusr);
                 continue;
             }
 
-            const already_mapped = await map_col.findOne({ type: "user", our_id: hres._id });
+            const already_mapped = linked_our.get(hres._id);
             if (already_mapped) {
                 ilog(`[usi] Found match ${get_hres_log_str(hres)} but hres already linked to ${already_mapped.qbt_id}`);
                 continue;
             }
 
             const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
-            await map_col.insertOne(map_obj);
+            inserts.push({ insertOne: { document: map_obj } });
+            linked_our.set(hres._id, map_obj); // write-through: claim this hres for the rest of the page
             ilog(`[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → ${get_user_log_str(qusr)}`);
         }
+
+        if (inserts.length > 0) await mongo.with_transaction((session) => map_col.bulkWrite(inserts, { session }));
         if (!more) break;
         page++;
     }

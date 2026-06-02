@@ -1,6 +1,7 @@
 import mongo from "./db";
+import type { AnyBulkWriteOperation } from "mongodb";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item, QBT_UPDATE_BY } from "./qbt_object_map";
+import { create_qbt_object_map_item, QBT_UPDATE_BY, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
 import { change_info, find_value_change_item, INVALID_IND, is_active, value_change_item } from "./uobj_common";
 import { is_awarded, EMP_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
@@ -85,27 +86,43 @@ async function bootstrap_jobcodes_loop(
         ilog(
             `[jc] Trying to match ${jobcodes.length} ${active === "yes" ? "active" : "archived"} jobcodes to uber contracts`
         );
+
+        // Prefetch which of this page's jobcodes are already linked, so the (relatively
+        // expensive) contract name match only runs for the ones that still need it.
+        const by_qbt_docs = await map_col.find({ type: "jobcode", qbt_id: { $in: jobcodes.map((j) => j.id) } }).toArray();
+        const linked_qbt = new Map(by_qbt_docs.map((m) => [m.qbt_id, m]));
+
+        // Match the unlinked jobcodes to contracts up front so we know which our_ids to prefetch.
+        const matched_cont = new Map<number, contract_route_doc>(); // jobcode id -> contract
         for (const jc of jobcodes) {
-            const existing = await map_col.findOne({
-                type: "jobcode",
-                qbt_id: jc.id,
-            });
+            if (linked_qbt.has(jc.id)) continue;
+            const match = find_matching_contract(jc, awarded_contracts);
+            if (match) matched_cont.set(jc.id, match);
+        }
+
+        // Prefetch existing mappings by our_id. linked_our is written through below so two
+        // jobcodes matching the same contract in one page don't both insert — that would
+        // violate the unique (type, our_id) index and abort the transaction.
+        const by_our_docs = await map_col
+            .find({ type: "jobcode", our_id: { $in: [...new Set([...matched_cont.values()].map((c) => c._id))] } })
+            .toArray();
+        const linked_our = new Map(by_our_docs.map((m) => [m.our_id, m]));
+        const inserts: AnyBulkWriteOperation<qbt_object_map>[] = [];
+
+        for (const jc of jobcodes) {
+            const existing = linked_qbt.get(jc.id);
             if (existing) {
                 ilog(`[jc] Already matched ${get_jobcode_log_str(jc)} to contract ${existing.our_id} - skipping`);
                 continue;
             }
 
-            const match = find_matching_contract(jc, awarded_contracts);
+            const match = matched_cont.get(jc.id);
             if (!match) {
                 nomatches.push(jc);
                 continue;
             }
 
-            const already_mapped = await map_col.findOne({
-                type: "jobcode",
-                our_id: match._id,
-            });
-
+            const already_mapped = linked_our.get(match._id);
             if (already_mapped) {
                 ilog(
                     `[jc] Found match ${get_contract_log_str(match)} for ${get_jobcode_log_str(jc)} but contract already linked to ${already_mapped.qbt_id}`
@@ -114,10 +131,12 @@ async function bootstrap_jobcodes_loop(
             }
 
             const map_obj = create_qbt_object_map_item(jc.id, match._id, "jobcode", new Date(jc.last_modified));
-            await map_col.insertOne(map_obj);
+            inserts.push({ insertOne: { document: map_obj } });
+            linked_our.set(match._id, map_obj); // write-through: claim this contract for the rest of the page
             ilog(`[jc] Bootstrap mapped contract ${get_contract_log_str(match)} → ${get_jobcode_log_str(jc)}`);
         }
 
+        if (inserts.length > 0) await mongo.with_transaction((session) => map_col.bulkWrite(inserts, { session }));
         if (!more) break;
         page++;
     }
