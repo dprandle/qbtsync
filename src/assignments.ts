@@ -12,7 +12,16 @@ const BID_ROLE_KEYS = new Set([
 ]);
 
 // Employee role keys whose linked hresources should receive a jobcode assignment.
-export const EMP_ROLE_KEYS = new Set(["A_Main_Carrier[021422170000UTC]", "B_Sub_Carrier[021422170000UTC]"]);
+export const EMP_ACTIVE_ROLE_KEYS = new Set(["A_Main_Carrier[021422170000UTC]", "B_Sub_Carrier[021422170000UTC]"]);
+
+// Broader set of roles that mark an hresource as an employee or manager (vs. a subcontractor).
+export const EMP_MGR_ROLE_KEYS = new Set([
+    ...EMP_ACTIVE_ROLE_KEYS,
+    "C_Previous_Carrier[021422170000UTC]",
+    "B_West_Manager[021422170000UTC]",
+    "C_South_Manager[021422170000UTC]",
+    "D_East_Manager[021422170000UTC]",
+]);
 
 export function is_awarded(cont: contract_route_doc): boolean {
     return !Object.keys(cont.assignments).some((key) => BID_ROLE_KEYS.has(key));

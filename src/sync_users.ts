@@ -2,9 +2,9 @@ import mongo from "./db";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
-import { change_info, is_active, make_ci_now } from "./uobj_common";
+import { change_info, is_active, make_ci_now, uid } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids, active_param } from "./qbt_client_interface";
-import { EMP_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
+import { EMP_ACTIVE_ROLE_KEYS, EMP_MGR_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
 import { ask_yes_no } from "./util";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
@@ -19,6 +19,7 @@ export type hresource_doc = {
     tt_flags: number;
     archived_info: change_info;
     last_update: change_info;
+    allowed_roles: uid[];
 };
 
 export function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
@@ -61,7 +62,8 @@ async function bootstrap_users_loop(
         // Match emails up front (cheap, in-memory) so we know which hres ids to prefetch.
         const matched_hres = new Map<number, hresource_doc>(); // qbt user id -> hres
         for (const qusr of users) {
-            const hres = hres_by_email.get(normalize_email(qusr.email)) ?? hres_by_email.get(normalize_email(qusr.username));
+            const hres =
+                hres_by_email.get(normalize_email(qusr.email)) ?? hres_by_email.get(normalize_email(qusr.username));
             if (hres) matched_hres.set(qusr.id, hres);
         }
 
@@ -71,7 +73,9 @@ async function bootstrap_users_loop(
         // insert — that would violate the unique (type, our_id) index and abort the txn.
         const [by_qbt_docs, by_our_docs] = await Promise.all([
             map_col.find({ type: "user", qbt_id: { $in: users.map((u) => u.id) } }).toArray(),
-            map_col.find({ type: "user", our_id: { $in: [...new Set([...matched_hres.values()].map((h) => h._id))] } }).toArray(),
+            map_col
+                .find({ type: "user", our_id: { $in: [...new Set([...matched_hres.values()].map((h) => h._id))] } })
+                .toArray(),
         ]);
         const linked_qbt = new Map(by_qbt_docs.map((m) => [m.qbt_id, m]));
         const linked_our = new Map(by_our_docs.map((m) => [m.our_id, m]));
@@ -110,13 +114,28 @@ async function bootstrap_users_loop(
     return nomatches;
 }
 
+function is_employee_or_mgr(hres: hresource_doc): boolean {
+    return hres.allowed_roles.some((r) => EMP_MGR_ROLE_KEYS.has(r.source_str));
+}
+
 export async function bootstrap_users(qbt: qbt_client): Promise<void> {
     if (get_sync_state().users.bootstrap_complete) return;
     ilog("[usi] Running bootstrap: matching users to hresources by email...");
     const all_hres = await mongo.get_hres().find({}).toArray();
+    const employees_and_mgrs = all_hres.filter((hr) => is_employee_or_mgr(hr));
 
-    // Create faster lookup table
-    const hres_by_email = new Map(all_hres.map((h) => [normalize_email(h.email), h]));
+    // Create faster lookup table - throw for any duplicate emails. We might have duplicate hrs (ie a subc and employee)
+    // but we should NOT have duplciates across employee/managers
+    const hres_by_email = new Map<string, hresource_doc>();
+    for (const h of employees_and_mgrs) {
+        const email = normalize_email(h.email);
+        const existing = hres_by_email.get(email);
+        if (existing) {
+            throw new Error(`Duplicate hresource for email ${email} -- existing: ${existing._id} dup: ${h._id}`);
+        }
+        hres_by_email.set(email, h);
+    }
+
     // Do active users first, then non active users as we want our active ones to take priority
     const active_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "yes");
     const archived_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "no");
@@ -206,7 +225,7 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     }
 
     // Find awarded+active contracts where this hres is linked under an employee role.
-    const role_filters = [...EMP_ROLE_KEYS].map((role) => ({
+    const role_filters = [...EMP_ACTIVE_ROLE_KEYS].map((role) => ({
         [`assignments.${role}.emp_id`]: hres._id,
     }));
     const contracts = await mongo.get_conts().find({ $or: role_filters }).toArray();

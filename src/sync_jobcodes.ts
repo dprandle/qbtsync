@@ -3,15 +3,22 @@ import type { AnyBulkWriteOperation } from "mongodb";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids, active_param } from "./qbt_client_interface";
-import { change_info, find_value_change_item, INVALID_IND, is_active, make_ci_now, value_change_item } from "./uobj_common";
-import { is_awarded, EMP_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
+import {
+    change_info,
+    find_value_change_item,
+    INVALID_IND,
+    is_active,
+    make_ci_now,
+    value_change_item,
+} from "./uobj_common";
+import { is_awarded, EMP_ACTIVE_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
 import { ask_yes_no } from "./util";
 
 // Collect the hresource ids linked to a contract under any employee role.
 function emp_hres_ids(cont: contract_route_doc): Set<string> {
     const ids = new Set<string>();
     for (const [role_key, links] of Object.entries(cont.assignments)) {
-        if (!EMP_ROLE_KEYS.has(role_key)) continue;
+        if (!EMP_ACTIVE_ROLE_KEYS.has(role_key)) continue;
         for (const link of links) {
             if (link.emp_id) ids.add(link.emp_id);
         }
@@ -63,17 +70,28 @@ function jc_name_contains(jc: qbt_jobcode, needle: string): boolean {
 }
 
 // First find see if we find a match for any current contract route name. If no match is found, search through all route names.
-function find_matching_contract(jc: qbt_jobcode, all_contracts: contract_route_doc[]) {
-    let match = all_contracts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
+function find_matching_contract(
+    jc: qbt_jobcode,
+    act_awd_conts: contract_route_doc[],
+    arch_awd_conts: contract_route_doc[]
+) {
+    let match = act_awd_conts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
     if (!match) {
-        match = all_contracts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
+        match = arch_awd_conts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
+    }
+    if (!match) {
+        match = act_awd_conts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
+    }
+    if (!match) {
+        match = arch_awd_conts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
     }
     return match;
 }
 
 async function bootstrap_jobcodes_loop(
     qbt: qbt_client,
-    awarded_contracts: contract_route_doc[],
+    act_awd_conts: contract_route_doc[],
+    arch_awd_conts: contract_route_doc[],
     active: active_param
 ): Promise<qbt_jobcode[]> {
     const map_col = mongo.get_qbt_map_objects();
@@ -87,14 +105,16 @@ async function bootstrap_jobcodes_loop(
 
         // Prefetch which of this page's jobcodes are already linked, so the (relatively
         // expensive) contract name match only runs for the ones that still need it.
-        const by_qbt_docs = await map_col.find({ type: "jobcode", qbt_id: { $in: jobcodes.map((j) => j.id) } }).toArray();
+        const by_qbt_docs = await map_col
+            .find({ type: "jobcode", qbt_id: { $in: jobcodes.map((j) => j.id) } })
+            .toArray();
         const linked_qbt = new Map(by_qbt_docs.map((m) => [m.qbt_id, m]));
 
         // Match the unlinked jobcodes to contracts up front so we know which our_ids to prefetch.
         const matched_cont = new Map<number, contract_route_doc>(); // jobcode id -> contract
         for (const jc of jobcodes) {
             if (linked_qbt.has(jc.id)) continue;
-            const match = find_matching_contract(jc, awarded_contracts);
+            const match = find_matching_contract(jc, act_awd_conts, arch_awd_conts);
             if (match) matched_cont.set(jc.id, match);
         }
 
@@ -146,14 +166,20 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
     ilog("[jc] Running bootstrap: matching jobcodes to contracts by route name...");
 
     // Load all contracts to search against
-    const all_contracts = await mongo.get_conts().find({}).toArray();
-    const all_awarded_contracts = all_contracts.filter((c) => {
+    const all_conts = await mongo.get_conts().find({}).toArray();
+    const awd_conts = all_conts.filter((c) => {
         return is_awarded(c);
     });
-
+    const act_awd_conts = awd_conts.filter((c) => {
+        return is_active(c.archived_info.on);
+    });
+    const arch_awd_conts = awd_conts.filter((c) => {
+        return !is_active(c.archived_info.on);
+    });
+    
     // We want to match all active jobcodes first, then look at archived ones
-    const active_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "yes");
-    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, all_awarded_contracts, "no");
+    const active_nomatches = await bootstrap_jobcodes_loop(qbt, act_awd_conts, arch_awd_conts, "yes");
+    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, act_awd_conts, arch_awd_conts, "no");
     for (const jc of archived_nomatches) {
         ilog(`[jc] Could not find matching contract for archived ${get_jobcode_log_str(jc)}`);
     }
