@@ -9,18 +9,13 @@ import { qbt_client, qbt_jobcode, qbt_user, active_param } from "./qbt_client_in
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { is_awarded, EMP_MGR_ROLE_KEYS } from "./assignments";
-import {
-    contract_route_doc,
-    get_current_route_name,
-    get_contract_log_str,
-    get_jobcode_log_str,
-} from "./sync_jobcodes";
+import { contract_route_doc, get_current_route_name, get_contract_log_str, get_jobcode_log_str } from "./sync_jobcodes";
 import { hresource_doc, normalize_email, get_user_log_str, get_hres_log_str } from "./sync_users";
 import { ask_yes_no } from "./util";
 
 // One-time bootstrap, run as its own entrypoint (npm run bootstrap) before the
 // sync service is ever started. It matches existing QBT jobcodes/users to our
-// contracts/hresources by heuristics (route-name substring, email, role-list
+// contracts/hresources by heuristics (route-name regexp, email, role-list
 // membership) that are only valid at first import — once mappings exist the sync
 // service maintains them, and these heuristics are not kept up to date. The sync
 // service refuses to start until both bootstraps below have completed.
@@ -28,38 +23,62 @@ import { ask_yes_no } from "./util";
 // ---------------------------------------------------------------------------
 // Jobcodes: match by route name
 // ---------------------------------------------------------------------------
+// A route code is a delimited five-character alphanumeric token (FIVE_RE), optionally
+// followed by a "-<letter>" suffix (SEVEN_RE). Matching is case-sensitive by design:
+// codes are always uppercase, so the character classes are uppercase-only. The
+// surrounding (?:^|[^A-Za-z0-9]) / lookahead anchors require the token to be delimited
+// so it isn't pulled out of a longer alphanumeric run.
+const SEVEN_RE = /(?:^|[^A-Za-z0-9])([A-Z0-9]{5}-[A-Z])(?=$|[^A-Za-z0-9])/;
+const FIVE_RE = /(?:^|[^A-Za-z0-9])([A-Z0-9]{5})(?=$|[^A-Za-z0-9])/;
 
-// True when needle is a non-empty substring of the jobcode name. The empty-string
-// guard is essential: "".includes("") and `anything.includes("")` are both true, so
-// a contract with no (current) route name would otherwise match every jobcode.
-function jc_name_contains(jc: qbt_jobcode, needle: string): boolean {
-    const n = needle.trim().toLowerCase();
-    return n.length > 0 && jc.name.toLowerCase().includes(n);
+// Pull the route code out of a jobcode name, preferring the longer suffixed form.
+// Returns "" when the name carries no recognizable code (those jobcodes go unmatched).
+function extract_cont_rname(jc_name: string): string {
+    const seven_match = jc_name.match(SEVEN_RE);
+    if (seven_match) return seven_match[1];
+
+    const five_match = jc_name.match(FIVE_RE);
+    if (five_match) return five_match[1];
+
+    return "";
 }
 
-// First find see if we find a match for any current contract route name. If no match is found, search through all route names.
-function find_matching_contract(
-    jc: qbt_jobcode,
-    act_awd_conts: contract_route_doc[],
-    arch_awd_conts: contract_route_doc[]
-) {
-    let match = act_awd_conts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
+// A set of awarded contracts to match against: an exact current-route-name index
+// for fast lookup, plus the full list (scanned for historical route-name matches).
+type awarded_pool = {
+    by_rname: Map<string, contract_route_doc>;
+    all: contract_route_doc[];
+};
+
+// Active contracts are matched before archived ones, so each is kept as its own pool.
+type awarded_pools = {
+    act: awarded_pool;
+    arch: awarded_pool;
+};
+
+// First see if we find a match for any current contract route name. If no match is found, search through all route names.
+function find_matching_contract(jc: qbt_jobcode, pools: awarded_pools): contract_route_doc | null {
+    const rname = extract_cont_rname(jc.name);
+    if (!rname) {
+        return null;
+    }
+
+    let match = pools.act.by_rname.get(rname);
     if (!match) {
-        match = arch_awd_conts.find((c) => jc_name_contains(jc, get_current_route_name(c)));
+        match = pools.arch.by_rname.get(rname);
     }
     if (!match) {
-        match = act_awd_conts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
+        match = pools.act.all.find((c) => c.route_names.some((chg_val) => rname === chg_val.val));
     }
     if (!match) {
-        match = arch_awd_conts.find((c) => c.route_names.some((chg_val) => jc_name_contains(jc, chg_val.val)));
+        match = pools.arch.all.find((c) => c.route_names.some((chg_val) => rname === chg_val.val));
     }
-    return match;
+    return match ?? null;
 }
 
 async function bootstrap_jobcodes_loop(
     qbt: qbt_client,
-    act_awd_conts: contract_route_doc[],
-    arch_awd_conts: contract_route_doc[],
+    pools: awarded_pools,
     active: active_param
 ): Promise<qbt_jobcode[]> {
     const map_col = mongo.get_qbt_map_objects();
@@ -82,7 +101,7 @@ async function bootstrap_jobcodes_loop(
         const matched_cont = new Map<number, contract_route_doc>(); // jobcode id -> contract
         for (const jc of jobcodes) {
             if (linked_qbt.has(jc.id)) continue;
-            const match = find_matching_contract(jc, act_awd_conts, arch_awd_conts);
+            const match = find_matching_contract(jc, pools);
             if (match) matched_cont.set(jc.id, match);
         }
 
@@ -145,9 +164,30 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
         return !is_active(c.archived_info.on);
     });
 
+    const build_pool = (conts: contract_route_doc[]): awarded_pool => {
+        const by_rname: Map<string, contract_route_doc> = new Map();
+        for (const c of conts) {
+            const cur_rname = get_current_route_name(c);
+            if (!cur_rname) continue;
+            const existing = by_rname.get(cur_rname);
+            if (existing) {
+                throw new Error(
+                    `Duplicate awarded contract for rname ${cur_rname} -- existing: ${existing._id} dup: ${c._id}`
+                );
+            }
+            by_rname.set(cur_rname, c);
+        }
+        return { by_rname, all: conts };
+    };
+
+    const pools: awarded_pools = {
+        act: build_pool(act_awd_conts),
+        arch: build_pool(arch_awd_conts),
+    };
+
     // We want to match all active jobcodes first, then look at archived ones
-    const active_nomatches = await bootstrap_jobcodes_loop(qbt, act_awd_conts, arch_awd_conts, "yes");
-    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, act_awd_conts, arch_awd_conts, "no");
+    const active_nomatches = await bootstrap_jobcodes_loop(qbt, pools, "yes");
+    const archived_nomatches = await bootstrap_jobcodes_loop(qbt, pools, "no");
     for (const jc of archived_nomatches) {
         ilog(`[jc] Could not find matching contract for archived ${get_jobcode_log_str(jc)}`);
     }
