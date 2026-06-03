@@ -125,11 +125,23 @@ File on disk (not in MongoDB) that persists cursors, bootstrap flags, and the la
 
 When =QBT_ENV=dev=, all QBT reads and writes go to a separate MongoDB database (=MOCK_QBT_DB_NAME=, default =mock_qbt=) instead of the real QBT API. Collections mirror the QBT entity names: =users=, =jobcodes=, =jobcode_assignments=, =timesheets= (plus =timesheets-deleted=, where the mock records deleted timesheets).
 
-Seeding the mock is a separate step, not done automatically on startup. =npm run seed_mock_db= clears the mock collections and copies a full snapshot of the live QBT data into them (timesheets are pulled from =TIMESHEET_START_DATE= onward). Run it whenever you want a fresh snapshot:
+Seeding the mock is a separate step, not done automatically on startup. =npm run seed_mock_db= clears the selected mock collections and copies a full snapshot of the live QBT data into them (timesheets are pulled from =TIMESHEET_START_DATE= onward). It requires at least one type flag — run with no args (or =-h=) to print usage. Note the =--= separator, which tells npm to pass the flags through to the script:
 
 #+begin_src sh
-npm run seed_mock_db
+npm run seed_mock_db -- --all         # seed every type (users, jobcodes, assignments, timesheets)
+npm run seed_mock_db -- --usi --jc    # seed only the listed types
 #+end_src
+
+| Flag    | Seeds               |
+|---------+---------------------|
+| =--usi= | users               |
+| =--jc=  | jobcodes            |
+| =--jca= | jobcode assignments |
+| =--ts=  | timesheets          |
+| =--all= | all of the above    |
+| =-h=    | show usage          |
+
+Each type drops and repopulates its own collection independently, so you can refresh a single entity without touching the others.
 
 ** Logging
 
@@ -176,8 +188,8 @@ cp .env.example .env
 Starts with =QBT_ENV=dev= automatically, running against the mock QBT database (no writes to production QBT). The mock is *not* seeded automatically — populate it first with =npm run seed_mock_db= (see [[*Mock QBT database (dev mode only)][Mock QBT database (dev mode only)]]), then run the one-time bootstrap before starting the service.
 
 #+begin_src sh
-npm run seed_mock_db   # one-time / whenever you want a fresh snapshot
-npm run bootstrap      # one-time: match QBT jobcodes/users to contracts/hresources
+npm run seed_mock_db -- --all   # one-time / whenever you want a fresh snapshot
+npm run bootstrap               # one-time: match QBT jobcodes/users to contracts/hresources
 npm run dev
 #+end_src
 
