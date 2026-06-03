@@ -21,7 +21,7 @@ export type hresource_doc = {
     last_update: change_info;
 };
 
-function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
+export function should_have_qbt_user(tt_flags: number, archived_on: Date): boolean {
     const tracking_enabled = (tt_flags & TIME_TRACKING_APP) !== 0;
     return is_active(archived_on) && tracking_enabled;
 }

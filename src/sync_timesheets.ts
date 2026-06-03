@@ -6,6 +6,7 @@ import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_i
 import { INVALID_DATETIME, QBT_UPDATE_BY, changed_by_us, is_active, make_ci_not_archived, make_ci_now } from "./uobj_common";
 import { change_info } from "./uobj_common";
 import { contract_route_doc } from "./sync_jobcodes";
+import { hresource_doc, should_have_qbt_user } from "./sync_users";
 import { config } from "./config";
 const TIME_RECORD_SCHEMA_VERSION = 1;
 
@@ -78,7 +79,6 @@ function day_start(start: Date, tz_bytes: number[]): Date {
 }
 
 function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: contract_route_doc): time_record {
-    const now = new Date();
     const start = new Date(ts.start);
     const end = ts.end ? new Date(ts.end) : INVALID_DATETIME;
     const ci = make_ci_now(` (${ts.location})`);
@@ -333,6 +333,7 @@ type outbound_ts_cache = {
     user_maps: Map<string, qbt_object_map>; // user mappings by our_id (trec.hrid)
     jc_maps: Map<string, qbt_object_map>; // jobcode mappings by our_id (trec.cont_id)
     qbt_ts: Map<number, qbt_timesheet>; // current QBT timesheets by qbt id
+    hres: Map<string, hresource_doc>; // hresources by _id (trec.hrid) — gates creation on time tracking
 };
 
 async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Promise<outbound_ts_cache> {
@@ -340,10 +341,11 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
     const cont_ids = [...new Set(trecs.map((t) => t.cont_id).filter(Boolean))];
     const hr_ids = [...new Set(trecs.map((t) => t.hrid).filter(Boolean))];
 
-    const [ts_map_docs, jc_map_docs, user_map_docs] = await Promise.all([
+    const [ts_map_docs, jc_map_docs, user_map_docs, hres_docs] = await Promise.all([
         map_col.find({ type: "timesheet", our_id: { $in: trecs.map((t) => t._id) } }).toArray(),
         map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray(),
         map_col.find({ type: "user", our_id: { $in: hr_ids } }).toArray(),
+        mongo.get_hres().find({ _id: { $in: hr_ids } }).toArray(),
     ]);
 
     // fetch_all_by_ids chunks by 100, so N per-item fetch_timesheet calls collapse to ceil(N/100).
@@ -354,6 +356,7 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
         user_maps: new Map(user_map_docs.map((m) => [m.our_id, m])),
         jc_maps: new Map(jc_map_docs.map((m) => [m.our_id, m])),
         qbt_ts: new Map(qbt_list.map((t) => [t.id, t])),
+        hres: new Map(hres_docs.map((h) => [h._id, h])),
     };
 }
 
@@ -402,6 +405,13 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
         return true;
     }
 
+    // Whether this trec's person should have time in QBT at all. Same predicate that
+    // governs whether their QBT user exists (the hres tt_flag is the source of truth),
+    // so creation here stays symmetric with user existence. A missing hres counts as
+    // "should not track" — we won't create time for someone we can't confirm.
+    const hres = cache.hres.get(trec.hrid);
+    const should_track = !!hres && should_have_qbt_user(hres.tt_flags, hres.archived_info.on);
+
     const do_create = async () => {
         const timesheet = await qbt.create_timesheet({
             user_id: user_map.qbt_id,
@@ -430,8 +440,14 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
         // per-item catch and floors the cursor, instead of wrongly triggering recreate.)
         const ts = cache.qbt_ts.get(mapping.qbt_id);
         if (!ts) {
-            wlog(`[ts] Timesheet ${mapping.qbt_id} missing on qbt - removing mapping ${mapping._id} and recreating`);
+            // QBT timesheet is gone either way, so drop the stale mapping; only recreate
+            // if the person should still be tracking time in qbt.
             await map_col.deleteOne({ _id: mapping._id });
+            if (!should_track) {
+                wlog(`[ts] Timesheet ${mapping.qbt_id} gone on qbt and hres ${trec.hrid} should not track - dropped stale mapping ${mapping._id}, not recreating`);
+                return true;
+            }
+            wlog(`[ts] Timesheet ${mapping.qbt_id} missing on qbt - removed stale mapping ${mapping._id} and recreating`);
             await do_create();
         } else {
             const updates: Partial<qbt_timesheet> = {};
@@ -459,6 +475,10 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
             }
         }
     } else if (want) {
+        if (!should_track) {
+            wlog(`[ts] Skipping with cursor advance - hres ${trec.hrid} should not be tracking time in qbt`);
+            return true;
+        }
         await do_create();
     } else {
         ilog(`[ts] No changes`);
