@@ -1,11 +1,17 @@
 import "./global_setup";
 import { config } from "./config";
 import mongo from "./db";
-import { reset_sync_state, ensure_state_file_writable, cleanup_due, save_cleanup_state } from "./sync_state";
+import {
+    reset_sync_state,
+    ensure_state_file_writable,
+    cleanup_due,
+    save_cleanup_state,
+    get_sync_state,
+} from "./sync_state";
 import { run_qbt_mapping_cleanup } from "./qbt_mapping_cleanup";
 import { update_time_recs_from_timesheets, update_timesheets_from_time_recs } from "./sync_timesheets";
-import { update_users_from_hres, bootstrap_users } from "./sync_users";
-import { update_jobcodes_from_contracts, bootstrap_jobcodes } from "./sync_jobcodes";
+import { update_users_from_hres } from "./sync_users";
+import { update_jobcodes_from_contracts } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
@@ -86,6 +92,17 @@ async function main(): Promise<void> {
         process.exit(0);
     }
 
+    // Bootstrap is a separate, one-time operation (npm run bootstrap) that matches
+    // existing QBT jobcodes/users to our contracts/hresources. The sync service
+    // assumes those mappings exist: without them it would treat every entity as
+    // new and create duplicate QBT objects. Refuse to start until both bootstraps
+    // have completed (a --reset clears these flags, forcing a re-bootstrap).
+    const state = get_sync_state();
+    if (!state.jobcodes.bootstrap_complete || !state.users.bootstrap_complete) {
+        elog("[startup] Bootstrap not complete — run `npm run bootstrap` before starting the sync service.");
+        process.exit(1);
+    }
+
     await mongo.connect();
 
     try {
@@ -97,19 +114,10 @@ async function main(): Promise<void> {
             qbt = new qbt_api_client();
         }
 
-        // Bootstrap must fully complete for both users and jobcodes before any
-        // sync runs: jobcode-assignment reconciliation (in both the user and
-        // jobcode syncs) reads the user<->jobcode mappings the other bootstrap
-        // produces, so a partial bootstrap would reconcile against an
-        // incomplete map.
-        ilog("[startup] Running bootstraps before any sync...");
-        await bootstrap_jobcodes(qbt);
-        await bootstrap_users(qbt);
-
         // The first inbound timesheet pass (cursor = CURSOR_EPOCH) performs the
         // historical backfill bounded by config.timesheet_start_date; no separate
         // full-import step is needed.
-        ilog("[startup] Bootstraps complete — starting periodic sync loop.");
+        ilog("[startup] Starting periodic sync loop.");
         await run_sync_loop(qbt);
     } finally {
         await mongo.disconnect();
