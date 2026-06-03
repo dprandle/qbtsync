@@ -3,9 +3,16 @@ import type { AnyBulkWriteOperation } from "mongodb";
 import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_interface";
-import { INVALID_DATETIME, QBT_UPDATE_BY, changed_by_us, is_active, make_ci_not_archived, make_ci_now } from "./uobj_common";
+import {
+    INVALID_DATETIME,
+    QBT_UPDATE_BY,
+    changed_by_us,
+    is_active,
+    make_ci_not_archived,
+    make_ci_now,
+} from "./uobj_common";
 import { change_info } from "./uobj_common";
-import { contract_route_doc } from "./sync_jobcodes";
+import { contract_route_doc, should_have_active_qbt_jobcode } from "./sync_jobcodes";
 import { hresource_doc, should_have_qbt_user } from "./sync_users";
 import { config } from "./config";
 const TIME_RECORD_SCHEMA_VERSION = 1;
@@ -134,8 +141,14 @@ async function load_inbound_batch(timesheets: qbt_timesheet[]): Promise<inbound_
     ]);
 
     const [trec_docs, cont_docs] = await Promise.all([
-        mongo.get_trecs().find({ _id: { $in: ts_map_docs.map((m) => m.our_id) } }).toArray(),
-        mongo.get_conts().find({ _id: { $in: jc_map_docs.map((m) => m.our_id) } }).toArray(),
+        mongo
+            .get_trecs()
+            .find({ _id: { $in: ts_map_docs.map((m) => m.our_id) } })
+            .toArray(),
+        mongo
+            .get_conts()
+            .find({ _id: { $in: jc_map_docs.map((m) => m.our_id) } })
+            .toArray(),
     ]);
 
     return {
@@ -334,6 +347,7 @@ type outbound_ts_cache = {
     jc_maps: Map<string, qbt_object_map>; // jobcode mappings by our_id (trec.cont_id)
     qbt_ts: Map<number, qbt_timesheet>; // current QBT timesheets by qbt id
     hres: Map<string, hresource_doc>; // hresources by _id (trec.hrid) — gates creation on time tracking
+    conts: Map<string, contract_route_doc>; // contracts by _id (trec.cont_id)
 };
 
 async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Promise<outbound_ts_cache> {
@@ -341,15 +355,25 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
     const cont_ids = [...new Set(trecs.map((t) => t.cont_id).filter(Boolean))];
     const hr_ids = [...new Set(trecs.map((t) => t.hrid).filter(Boolean))];
 
-    const [ts_map_docs, jc_map_docs, user_map_docs, hres_docs] = await Promise.all([
+    const [ts_map_docs, jc_map_docs, user_map_docs, hres_docs, cont_docs] = await Promise.all([
         map_col.find({ type: "timesheet", our_id: { $in: trecs.map((t) => t._id) } }).toArray(),
         map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray(),
         map_col.find({ type: "user", our_id: { $in: hr_ids } }).toArray(),
-        mongo.get_hres().find({ _id: { $in: hr_ids } }).toArray(),
+        mongo
+            .get_hres()
+            .find({ _id: { $in: hr_ids } })
+            .toArray(),
+        mongo
+            .get_conts()
+            .find({ _id: { $in: cont_ids } })
+            .toArray(),
     ]);
 
     // fetch_all_by_ids chunks by 100, so N per-item fetch_timesheet calls collapse to ceil(N/100).
-    const qbt_list = await fetch_all_by_ids(ts_map_docs.map((m) => m.qbt_id), (ids) => qbt.fetch_timesheets({ ids }));
+    const qbt_list = await fetch_all_by_ids(
+        ts_map_docs.map((m) => m.qbt_id),
+        (ids) => qbt.fetch_timesheets({ ids })
+    );
 
     return {
         ts_maps: new Map(ts_map_docs.map((m) => [m.our_id, m])),
@@ -357,6 +381,7 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
         jc_maps: new Map(jc_map_docs.map((m) => [m.our_id, m])),
         qbt_ts: new Map(qbt_list.map((t) => [t.id, t])),
         hres: new Map(hres_docs.map((h) => [h._id, h])),
+        conts: new Map(cont_docs.map((c) => [c._id, c])),
     };
 }
 
@@ -364,7 +389,11 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
 // (pushed, created, or intentionally nothing-to-do), false if it was skipped
 // because its QBT user/jobcode mappings don't exist yet and it should be retried.
 // Reads come from the prefetched cache; writes are issued per item.
-async function process_time_record_update(trec: time_record, qbt: qbt_client, cache: outbound_ts_cache): Promise<boolean> {
+async function process_time_record_update(
+    trec: time_record,
+    qbt: qbt_client,
+    cache: outbound_ts_cache
+): Promise<boolean> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_qbt_timesheet(trec.archived_info.on);
     const mapping = cache.ts_maps.get(trec._id);
@@ -395,22 +424,31 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
         return true;
     }
 
-    // Creating in QBT requires both user and jobcode mappings to exist. If they don't its most likely a subcontractor timesheet
-    const jobcode_map = cache.jc_maps.get(trec.cont_id);
-    const user_map = cache.user_maps.get(trec.hrid);
-    if (!jobcode_map || !user_map) {
-        const jcstat = jobcode_map ? `valid (${jobcode_map.qbt_id})` : `missing (${trec.cont_id})`;
-        const usrstat = user_map ? `valid (${user_map.qbt_id})` : `missing (${trec.hrid})`;
-        wlog(`[ts] Skipping with cursor advance - no usr and/or jc - probably subc trec -- jc: ${jcstat} | usr: ${usrstat}`);
-        return true;
-    }
-
     // Whether this trec's person should have time in QBT at all. Same predicate that
     // governs whether their QBT user exists (the hres tt_flag is the source of truth),
     // so creation here stays symmetric with user existence. A missing hres counts as
     // "should not track" — we won't create time for someone we can't confirm.
     const hres = cache.hres.get(trec.hrid);
+    const user_map = cache.user_maps.get(trec.hrid);
     const should_track = !!hres && should_have_qbt_user(hres.tt_flags, hres.archived_info.on);
+    if (!user_map) {
+        ilog(
+            `[ts] Skipping ${should_track ? "without" : "with"} cursor advance (${should_track ? "employee" : "subc"})`
+        );
+        return !should_track;
+    }
+
+    // Skip update and advance cursor if there is no jobcode mapping and there shouldn't be, and if there should be don't advance the
+    // cursor so we can wait for one to show up
+    const cont = cache.conts.get(trec.cont_id);
+    const jobcode_map = cache.jc_maps.get(trec.cont_id);
+    const should_have_jc = !!cont && should_have_active_qbt_jobcode(cont);
+    if (!jobcode_map) {
+        ilog(
+            `[ts] Skipping ${should_have_jc ? "without" : "with"} cursor advance (${should_have_jc ? "jci missing" : "no jci"})`
+        );
+        return !should_have_jc;
+    }
 
     const do_create = async () => {
         const timesheet = await qbt.create_timesheet({
@@ -444,10 +482,14 @@ async function process_time_record_update(trec: time_record, qbt: qbt_client, ca
             // if the person should still be tracking time in qbt.
             await map_col.deleteOne({ _id: mapping._id });
             if (!should_track) {
-                wlog(`[ts] Timesheet ${mapping.qbt_id} gone on qbt and hres ${trec.hrid} should not track - dropped stale mapping ${mapping._id}, not recreating`);
+                wlog(
+                    `[ts] Timesheet ${mapping.qbt_id} gone on qbt and hres ${trec.hrid} should not track - dropped stale mapping ${mapping._id}, not recreating`
+                );
                 return true;
             }
-            wlog(`[ts] Timesheet ${mapping.qbt_id} missing on qbt - removed stale mapping ${mapping._id} and recreating`);
+            wlog(
+                `[ts] Timesheet ${mapping.qbt_id} missing on qbt - removed stale mapping ${mapping._id} and recreating`
+            );
             await do_create();
         } else {
             const updates: Partial<qbt_timesheet> = {};

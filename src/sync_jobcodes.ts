@@ -41,7 +41,7 @@ function get_current_route_name(cont: contract_route_doc): string {
     return ind !== INVALID_IND ? cont.route_names[ind].val : "";
 }
 
-function should_have_active_qbt_jobcode(cont: contract_route_doc): boolean {
+export function should_have_active_qbt_jobcode(cont: contract_route_doc): boolean {
     return is_active(cont.archived_info.on) && is_awarded(cont);
 }
 
@@ -212,7 +212,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         }
     } else if (want) {
         jci = await qbt.create_jobcode({
-            name: cont.route_num ?? cur_rname,
+            name: cont.route_num || cur_rname,
             jobcode_type: "regular",
         });
         const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
