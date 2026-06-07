@@ -5,7 +5,7 @@ import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_ma
 import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_interface";
 import {
     INVALID_DATETIME,
-    QBT_UPDATE_BY,
+    OUR_UPDATE_BY,
     changed_by_us,
     is_active,
     make_ci_not_archived,
@@ -458,7 +458,7 @@ async function process_time_record_update(
             end: on_the_clock ? "" : trec.end.toISOString(),
             date: trec.date.toISOString().slice(0, 10),
             notes: trec.notes,
-            location: QBT_UPDATE_BY,
+            location: OUR_UPDATE_BY,
             on_the_clock,
         });
         const map_obj = create_qbt_object_map_item(

@@ -1,4 +1,4 @@
-export const QBT_UPDATE_BY = "qbtsync";
+export const OUR_UPDATE_BY = "qbtsync";
 export type uid = {
     source_str: string;
 };
@@ -22,15 +22,15 @@ export function make_ci(by: string, on: Date): change_info {
 }
 
 export function make_ci_now(by_extra: string = ""): change_info {
-    return make_ci(QBT_UPDATE_BY + by_extra, new Date());
+    return make_ci(OUR_UPDATE_BY + by_extra, new Date());
 }
 
 export function make_ci_not_archived(by_extra: string = ""): change_info {
-    return make_ci(QBT_UPDATE_BY + by_extra, INVALID_DATETIME);
+    return make_ci(OUR_UPDATE_BY + by_extra, INVALID_DATETIME);
 }
 
 export function changed_by_us(ci: change_info): boolean {
-    return ci.by.source_str.includes(QBT_UPDATE_BY);
+    return ci.by.source_str.includes(OUR_UPDATE_BY);
 }
 
 export function find_value_change_item<T>(
