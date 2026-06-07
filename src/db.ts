@@ -53,7 +53,7 @@ function get_qbt_map_objects(): Collection<qbt_object_map> {
     return db.collection<qbt_object_map>("qbt_object_map");
 }
 
-function get_hres(): Collection<hresource_doc> {
+function get_hresources(): Collection<hresource_doc> {
     return db.collection<hresource_doc>("hresource");
 }
 
@@ -91,7 +91,7 @@ const mongo = {
     get_mock_db,
     get_trecs,
     get_qbt_map_objects,
-    get_hres,
+    get_hresources,
     get_conts,
     get_mock_users,
     get_mock_jobcodes,

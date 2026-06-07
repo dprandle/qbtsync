@@ -360,7 +360,7 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
         map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray(),
         map_col.find({ type: "user", our_id: { $in: hr_ids } }).toArray(),
         mongo
-            .get_hres()
+            .get_hresources()
             .find({ _id: { $in: hr_ids } })
             .toArray(),
         mongo

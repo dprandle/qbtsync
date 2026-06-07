@@ -139,7 +139,7 @@ export async function update_users_from_hres(qbt: qbt_client): Promise<void> {
 
     // Query hresources modified since the cursor
     const changed = await mongo
-        .get_hres()
+        .get_hresources()
         .find({ "last_update.on": { $gt: since } })
         .toArray();
 

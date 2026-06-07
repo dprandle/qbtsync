@@ -42,7 +42,7 @@ const HANDLERS: Record<qbt_object_type, type_handler> = {
     user: {
         fetch_qbt_existing: (qbt, ids) =>
             qbt_id_set(fetch_all_by_ids(ids, (c) => qbt.fetch_users({ ids: c, active: "both" }))),
-        fetch_our_existing: (ids) => our_id_set(mongo.get_hres().find({ _id: { $in: ids } }, { projection: { _id: 1 } })),
+        fetch_our_existing: (ids) => our_id_set(mongo.get_hresources().find({ _id: { $in: ids } }, { projection: { _id: 1 } })),
         reap_orphan_qbt: (qbt, ids) => archive_each(ids, "user", (id) => qbt.update_user(id, { active: false })),
     },
     jobcode: {

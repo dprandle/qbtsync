@@ -44,7 +44,7 @@ async function handle_invite(
     if (mapping) {
         invite = { contact_method, user_id: mapping.qbt_id };
     } else {
-        const hres = await mongo.get_hres().findOne({ _id: hres_id });
+        const hres = await mongo.get_hresources().findOne({ _id: hres_id });
         if (!hres) {
             return reply
                 .code(404)

@@ -284,7 +284,7 @@ function is_employee_or_mgr(hres: hresource_doc): boolean {
 export async function bootstrap_users(qbt: qbt_client): Promise<void> {
     if (get_sync_state().users.bootstrap_complete) return;
     ilog("[usi] Running bootstrap: matching users to hresources by email...");
-    const all_hres = await mongo.get_hres().find({}).toArray();
+    const all_hres = await mongo.get_hresources().find({}).toArray();
     const employees_and_mgrs = all_hres.filter((hr) => is_employee_or_mgr(hr));
 
     // Create faster lookup table - throw for any duplicate emails. We might have duplicate hrs (ie a subc and employee)
