@@ -18,6 +18,9 @@ import {
     type qbt_jobcodes_response,
     type qbt_jobcode_assignment,
     type qbt_jobcode_assignments_response,
+    type create_invitation_opts,
+    type qbt_invite_result,
+    type qbt_invitations_response,
 } from "./qbt_client_interface";
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
@@ -223,5 +226,10 @@ export class qbt_api_client implements qbt_client {
 
     async delete_jobcode_assignment(id: number): Promise<void> {
         await qbt_delete("/jobcode_assignments", { ids: String(id) });
+    }
+
+    async create_invitation(opts: create_invitation_opts): Promise<qbt_invite_result> {
+        const data = (await qbt_post("/invitations", { data: [opts] })) as qbt_invitations_response;
+        return Object.values(data.results.invites)[0];
     }
 }

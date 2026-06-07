@@ -57,6 +57,15 @@ export type fetch_assignments_opts = {
 
 export type fetch_assignments_result = fetch_items_result<qbt_jobcode_assignment>;
 
+export type qbt_contact_method = "sms" | "email";
+
+// Per the QBT invitations API, contact_method is always required, and exactly
+// one of user_id (invite an existing user) or contact_info (the email/phone to
+// send the invite to) must be supplied — they're mutually exclusive.
+export type create_invitation_opts =
+    | { contact_method: qbt_contact_method; user_id: number }
+    | { contact_method: qbt_contact_method; contact_info: string };
+
 // QuickBooks Time API types
 export type qbt_user = {
     id: number;
@@ -133,6 +142,18 @@ export type qbt_jobcode_assignments_response = {
     more: boolean;
 };
 
+// Per-invite outcome, keyed by request-array index in the response.
+export type qbt_invite_result = {
+    _status_code: number;
+    _status_message: string;
+};
+
+export type qbt_invitations_response = {
+    results: {
+        invites: Record<string, qbt_invite_result>;
+    };
+};
+
 // Mock-storage shapes: the wire-side `id: number` becomes Mongo's `_id: number`
 // so the mock collections can be typed natively without casts.
 export type mock_qbt_user = Omit<qbt_user, "id"> & { _id: number };
@@ -174,4 +195,7 @@ export interface qbt_client {
     fetch_jobcode_assignment(id: number): Promise<qbt_jobcode_assignment>;
     create_jobcode_assignment(user_id: number, jobcode_id: number): Promise<qbt_jobcode_assignment>;
     delete_jobcode_assignment(id: number): Promise<void>;
+
+    // Invitations
+    create_invitation(opts: create_invitation_opts): Promise<qbt_invite_result>;
 }

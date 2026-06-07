@@ -207,32 +207,40 @@ On a fresh database the first inbound timesheet pass backfills history automatic
 
 *** Running as a systemd service
 
-A unit file is provided at =deploy/qbtsync.service=. It runs the built service
-as a dedicated =qbtsync= user, loads config from =/etc/qbtsync/qbtsync.env=, and
-stores =sync_state.json= under systemd's managed =StateDirectory= so the cursors
-and bootstrap flags survive restarts and redeploys.
+A unit file is provided at =deploy/qbtsync.service=. It runs the service as
+root straight from a git checkout in root's home (=/root/qbtsync=), reads
+config from that directory's =.env= (via dotenv), recompiles =dist/= on every
+(re)start, and keeps =sync_state.json= alongside the code. The same process also
+serves the invite endpoint on =127.0.0.1:3001=. Updates are a plain =git pull=
+followed by =systemctl restart qbtsync=.
 
-Note: =sync_state.json= is written relative to the process working directory
-unless =SYNC_STATE_FILE= is set. The unit pins it to an absolute path under
-=/var/lib/qbtsync=; do the same for any other process supervisor.
+Note: =sync_state.json= is written relative to the working directory (the
+default =SYNC_STATE_FILE=./sync_state.json=), so it lives in the checkout and —
+being gitignored — survives =git pull=. Set =SYNC_STATE_FILE= to an absolute
+path if you run from elsewhere or under a different supervisor.
 
 #+begin_src sh
-# 1. Create the service user and place the built app
-sudo useradd --system --no-create-home --shell /usr/sbin/nologin qbtsync
-sudo mkdir -p /opt/qbtsync
-sudo rsync -a --delete dist node_modules package.json /opt/qbtsync/
-sudo chown -R qbtsync:qbtsync /opt/qbtsync
+# 1. Clone into root's home and install deps (devDependencies included — the
+#    unit builds TypeScript on start, so `npm install`, not --production).
+cd /root
+git clone https://github.com/dprandle/qbtsync.git
+cd qbtsync
+npm install
 
-# 2. Provide config + secrets (from .env.example)
-sudo mkdir -p /etc/qbtsync
-sudo install -m 600 -o qbtsync -g qbtsync .env /etc/qbtsync/qbtsync.env
+# 2. Provide config + secrets (from .env.example) as .env in the checkout
+cp .env.example .env
+$EDITOR .env
 
-# 3. Install and start the unit
-sudo cp deploy/qbtsync.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now qbtsync
+# 3. Run the one-time bootstrap before first start (see Bootstrap above)
+npm run bootstrap
 
-# 4. Watch the logs
+# 4. Install and start the unit (paths assume `which node`/`which npm` are
+#    /usr/bin — adjust ExecStart/ExecStartPre in the unit otherwise)
+cp deploy/qbtsync.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now qbtsync
+
+# 5. Watch the logs
 journalctl -u qbtsync -f
 #+end_src
 

@@ -37,7 +37,7 @@ export function normalize_email(s: string): string {
     return s.trim().toLowerCase();
 }
 
-function normalize_phone_number(phone_str: string): string {
+export function normalize_phone_number(phone_str: string): string {
     let num = phone_str.replace(/\D/g, "");
     if (num.length === 11 && num.startsWith("1")) {
         num = num.slice(1);

@@ -1,5 +1,5 @@
 [Unit]
-Description=qbtsync — QuickBooks Time <-> UberMail MongoDB sync service
+Description=qbtsync — QuickBooks Time <-> UberMail MongoDB sync + invite server
 Documentation=https://github.com/dprandle/qbtsync
 After=network-online.target
 Wants=network-online.target
@@ -7,48 +7,37 @@ Wants=network-online.target
 [Service]
 Type=simple
 
-# Dedicated unprivileged account. Create once with:
-#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin qbtsync
-User=qbtsync
-Group=qbtsync
+# Runs as root straight from the git checkout in root's home, so updates are a
+# plain `git pull` followed by `systemctl restart qbtsync` (the build step below
+# recompiles dist/ on every (re)start).
+WorkingDirectory=/root/qbtsync
 
-# Where the built code lives (contains dist/, node_modules/).
-WorkingDirectory=/opt/qbtsync
+# Config + secrets (MONGODB_URI, QBT_ACCESS_TOKEN, QBT_ENV, etc.) are read from
+# the .env in this directory by dotenv at startup — no EnvironmentFile needed.
+
+# Recompile TypeScript -> dist/ before starting, so a `git pull` is picked up on
+# restart. Requires devDependencies installed (`npm install`, not --production).
+# Adjust the node/npm paths if `which node` / `which npm` differ on the droplet.
+ExecStartPre=/usr/bin/npm run build
 ExecStart=/usr/bin/node dist/index.js
 
-# Config + secrets (MONGODB_URI, QBT_ACCESS_TOKEN, etc.) live here, not in the
-# unit. Create /etc/qbtsync/qbtsync.env (chmod 600, owned by qbtsync) from
-# .env.example. The leading '-' makes the file optional so the service still
-# starts if everything is supplied another way.
-EnvironmentFile=-/etc/qbtsync/qbtsync.env
+# sync_state.json (cursors + bootstrap flags) lands here in the working dir via
+# the default SYNC_STATE_FILE=./sync_state.json. It's gitignored, so it survives
+# `git pull`. The invite server listens on 127.0.0.1:3001.
 
-# systemd creates and owns /var/lib/qbtsync (mode 0750) and keeps it across
-# restarts/redeploys. Point the persisted cursor/bootstrap state at it so a
-# moved working directory never replays the full timesheet import.
-StateDirectory=qbtsync
-Environment=SYNC_STATE_FILE=/var/lib/qbtsync/sync_state.json
-
-# Restart on crash; don't hammer on a hard config failure.
+# Restart on crash; don't hammer on a hard config/build failure.
 Restart=on-failure
 RestartSec=10s
 StartLimitIntervalSec=300
 StartLimitBurst=5
 
+# Give the in-process graceful shutdown (SIGTERM -> drain invite server, close
+# MongoDB) room to finish; its own 10s watchdog force-exits well before this.
+TimeoutStopSec=30s
+
 # Logs to the journal: journalctl -u qbtsync -f
 StandardOutput=journal
 StandardError=journal
-
-# --- Basic hardening ---
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-# StateDirectory is writable automatically; nothing else needs to be.
-ReadWritePaths=/var/lib/qbtsync
-ProtectKernelTunables=true
-ProtectControlGroups=true
-RestrictSUIDSGID=true
-LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target

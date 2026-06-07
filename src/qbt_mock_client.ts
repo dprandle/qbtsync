@@ -13,6 +13,8 @@ import {
     type qbt_user,
     type qbt_jobcode,
     type qbt_jobcode_assignment,
+    type create_invitation_opts,
+    type qbt_invite_result,
 } from "./qbt_client_interface";
 import mongo from "./db";
 import { config } from "./config";
@@ -250,5 +252,11 @@ export class qbt_mock_client implements qbt_client {
         await mongo
             .get_mock_assignments()
             .updateOne({ _id: id }, { $set: { active: false, last_modified: now_iso() } });
+    }
+
+    async create_invitation(opts: create_invitation_opts): Promise<qbt_invite_result> {
+        // Dev mode: no real invite is sent — just log what would have gone out.
+        ilog("[mock] create_invitation", opts);
+        return { _status_code: 201, _status_message: "Created" };
     }
 }

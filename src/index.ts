@@ -15,6 +15,7 @@ import { update_jobcodes_from_contracts } from "./sync_jobcodes";
 import { qbt_api_client } from "./qbt_client";
 import { qbt_mock_client } from "./qbt_mock_client";
 import { qbt_client } from "./qbt_client_interface";
+import { start_invite_server } from "./invite_server";
 
 const do_reset = process.argv.includes("--reset");
 
@@ -112,6 +113,41 @@ async function main(): Promise<void> {
             qbt = new qbt_mock_client();
         } else {
             qbt = new qbt_api_client();
+        }
+
+        // Serve invite requests from the same process: it shares this mongo
+        // connection and qbt client, and the handler only reads the qbt object
+        // map (never writes it), so it can't race the sync loop's map updates.
+        const app = await start_invite_server(qbt);
+
+        // systemd sends SIGTERM on `systemctl stop` (and SIGINT on Ctrl-C in a
+        // foreground run). Drain in-flight invite requests and close connections
+        // cleanly instead of dropping them on a hard exit. The sync loop never
+        // returns, so this handler — not the finally below — is the normal exit
+        // path. A watchdog force-exits if the clean shutdown stalls (e.g. a hung
+        // request), so we don't run past systemd's TimeoutStopSec.
+        let shutting_down = false;
+        const shutdown = async (sig: string): Promise<void> => {
+            if (shutting_down) return;
+            shutting_down = true;
+            ilog(`[shutdown] ${sig} received — closing invite server and MongoDB connection`);
+            const force = setTimeout(() => {
+                elog("[shutdown] Clean shutdown timed out — forcing exit");
+                process.exit(1);
+            }, 10_000);
+            force.unref();
+            try {
+                await app.close();
+                await mongo.disconnect();
+                ilog("[shutdown] Clean shutdown complete");
+                process.exit(0);
+            } catch (err) {
+                elog("[shutdown] Error during shutdown:", err);
+                process.exit(1);
+            }
+        };
+        for (const sig of ["SIGINT", "SIGTERM"] as const) {
+            process.on(sig, () => void shutdown(sig));
         }
 
         // The first inbound timesheet pass (cursor = CURSOR_EPOCH) performs the
