@@ -20,7 +20,7 @@ async function fetch_all<T>(
 }
 
 async function clear_col(label: string, drop: () => Promise<boolean>): Promise<void> {
-    ilog(`[seed:${label}] Dropping mock collection...`);
+    ilog(`[seed:${label}] Dropping collection...`);
     try {
         await drop();
         ilog(`[seed:${label}] Dropped.`);
@@ -72,6 +72,15 @@ async function seed_timesheets(api: qbt_api_client) {
 }
 
 
+// Invitations aren't QBT data — they're written by our invite server as invites
+// go out. There's nothing to copy from the live API; we just clear the
+// collection so dev starts fresh and you can watch new invitations land in it.
+async function seed_invitations(_api: qbt_api_client) {
+    ilog("[seed:inv] Clearing invitations...");
+    await clear_col("inv", () => mongo.get_mock_invitations().drop());
+    ilog("[seed:inv] Done. App-generated; nothing seeded.");
+}
+
 // Each seed type, keyed by the CLI flag that selects it. Every entry drops its
 // own mock collection and repopulates it with a full copy of the live QBT data,
 // independent of the others.
@@ -80,6 +89,7 @@ const SEEDERS: Record<string, { label: string; run: (api: qbt_api_client) => Pro
     "--jc": { label: "jobcodes", run: seed_jobcodes },
     "--jca": { label: "jobcode assignments", run: seed_jobcode_assignments },
     "--ts": { label: "timesheets", run: seed_timesheets },
+    "--inv": { label: "invitations (clear only)", run: seed_invitations },
 };
 
 function help_message(): string {

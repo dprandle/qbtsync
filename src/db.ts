@@ -4,6 +4,7 @@ import { type time_record } from "./sync_timesheets";
 import { type qbt_object_map } from "./qbt_object_map";
 import { type hresource_doc } from "./sync_users";
 import { type contract_route_doc } from "./sync_jobcodes";
+import { type invitation_doc } from "./invite_server";
 import {
     mock_qbt_user,
     mock_qbt_jobcode,
@@ -63,6 +64,12 @@ function get_conts(): Collection<contract_route_doc> {
 
 // Mock QBT collections (dev mode only — stored in a separate DB)
 
+// Not QBT data — written by our invite server as invites go out. Lives in the
+// mock DB so it's cleared alongside the rest on seed and visible there in dev.
+function get_mock_invitations(): Collection<invitation_doc> {
+    return mock_db.collection<invitation_doc>("invitations");
+}
+
 function get_mock_users(): Collection<mock_qbt_user> {
     return mock_db.collection<mock_qbt_user>("users");
 }
@@ -93,6 +100,7 @@ const mongo = {
     get_qbt_map_objects,
     get_hresources,
     get_conts,
+    get_mock_invitations,
     get_mock_users,
     get_mock_jobcodes,
     get_mock_assignments,
