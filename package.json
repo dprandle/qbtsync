@@ -1,27 +1,28 @@
 {
-  "name": "qbtsync",
-  "version": "1.0.0",
-  "description": "QuickBooks Time sync service for time_records",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc",
-    "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
-    "seed_mock_db": "npm run build && node dist/seed_mock_db.js",
-    "bootstrap": "npm run build && node dist/bootstrap.js",
-    "start": "npm run build && node dist/index.js",
-    "reset": "npm run build && node dist/index.js --reset",
-    "wipe": "npm run build && node dist/index.js --reset"
-  },
-  "dependencies": {
-    "dotenv": "^16.4.5",
-    "fastify": "^5.8.5",
-    "mongodb": "^6.8.0"
-  },
-  "devDependencies": {
-    "@types/node": "^22.0.0",
-    "nodemon": "^3.1.4",
-    "prettier": "^3.8.3",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.5.4"
-  }
+    "name": "qbtsync",
+    "version": "1.0.0",
+    "description": "QuickBooks Time sync service for time_records",
+    "main": "dist/index.js",
+    "scripts": {
+        "clean": "rm -rf dist && mkdir dist",
+        "build": "npm run clean && tsc",
+        "dev": "QBT_ENV=dev nodemon --watch src --ext ts --exec \"npm run build && node dist/index.js\"",
+        "seed_mock_db": "npm run build && node dist/seed_mock_db.js",
+        "bootstrap": "npm run build && node dist/bootstrap.js",
+        "start": "npm run build && node dist/index.js",
+        "reset": "npm run build && node dist/index.js --reset",
+        "wipe": "npm run build && node dist/index.js --reset"
+    },
+    "dependencies": {
+        "dotenv": "^16.4.5",
+        "fastify": "^5.8.5",
+        "mongodb": "^6.8.0"
+    },
+    "devDependencies": {
+        "@types/node": "^22.0.0",
+        "nodemon": "^3.1.4",
+        "prettier": "^3.8.3",
+        "ts-node": "^10.9.2",
+        "typescript": "^5.5.4"
+    }
 }
