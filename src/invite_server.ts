@@ -28,44 +28,30 @@ const invite_body_schema = {
 // Resolves an invite request to a QBT invitation and sends it. Body validation
 // is handled by invite_body_schema before this runs, so hres_id is a non-empty
 // string and contact_method is valid here.
-async function handle_invite(
-    qbt: qbt_client,
-    req: FastifyRequest<{ Body: invite_body }>,
-    reply: FastifyReply
-): Promise<FastifyReply> {
+async function handle_invite(qbt: qbt_client, req: FastifyRequest<{ Body: invite_body }>, reply: FastifyReply) {
     const { hres_id, contact_method } = req.body;
 
     // Prefer an existing QBT user: if this hres is already mapped to one,
     // invite by user_id. Otherwise fall back to the hresource's own contact
     // details matching the requested method.
     const mapping = await mongo.get_qbt_map_objects().findOne({ type: "user", our_id: hres_id });
-
-    let invite: create_invitation_opts;
-    if (mapping) {
-        invite = { contact_method, user_id: mapping.qbt_id };
-    } else {
-        const hres = await mongo.get_hresources().findOne({ _id: hres_id });
-        if (!hres) {
-            return reply
-                .code(404)
-                .send({ ok: false, error: `No QBT user mapping or hresource found for hres_id ${hres_id}` });
-        }
-        const contact_info =
-            contact_method === "email" ? normalize_email(hres.email) : normalize_phone_number(hres.phone_number);
-        if (!contact_info) {
-            const field = contact_method === "email" ? "email" : "phone number";
-            return reply.code(422).send({ ok: false, error: `hresource ${hres_id} has no ${field} to invite` });
-        }
-        invite = { contact_method, contact_info };
+    if (!mapping) {
+        return reply.code(404).send({
+            message:
+                "No quickbooks time user found. If you just enabled quickbooks time tracking, give it a minute and try again.",
+        });
     }
+    const invite = { contact_method, user_id: mapping.qbt_id };
 
     try {
         const result = await qbt.create_invitation(invite);
         ilog(`[invite] hres ${hres_id} via ${contact_method}:`, invite, "->", result);
-        return reply.send({ ok: true, invite, result });
+        return reply.send({
+            message: `Successfully created invite for qbt user ${invite.user_id} - ${result._status_code} ${result._status_message}`,
+        });
     } catch (err) {
         elog(`[invite] QBT invitation failed for hres ${hres_id}:`, err);
-        return reply.code(502).send({ ok: false, error: String(err) });
+        return reply.code(502).send({ message: String(err) });
     }
 }
 
