@@ -5,31 +5,19 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
-
 # Runs as root straight from the git checkout in root's home, so updates are a
 # plain `git pull` followed by `systemctl restart qbtsync` (the build step below
 # recompiles dist/ on every (re)start).
 WorkingDirectory=/root/qbtsync
 
-# Config + secrets (MONGODB_URI, QBT_ACCESS_TOKEN, QBT_ENV, etc.) are read from
-# the .env in this directory by dotenv at startup — no EnvironmentFile needed.
-
-# Recompile TypeScript -> dist/ before starting, so a `git pull` is picked up on
-# restart. Requires devDependencies installed (`npm install`, not --production).
-# Adjust the node/npm paths if `which node` / `which npm` differ on the droplet.
-ExecStartPre=/usr/bin/npm run build
-ExecStart=/usr/bin/node dist/index.js
-
-# sync_state.json (cursors + bootstrap flags) lands here in the working dir via
-# the default SYNC_STATE_FILE=./sync_state.json. It's gitignored, so it survives
-# `git pull`. The invite server listens on 127.0.0.1:3001.
+# Also cleans and rebuilds
+ExecStart=/usr/bin/npm start
 
 # Restart on crash; don't hammer on a hard config/build failure.
 Restart=on-failure
 RestartSec=10s
 StartLimitIntervalSec=300
-StartLimitBurst=5
+StartLimitBurst=10
 
 # Give the in-process graceful shutdown (SIGTERM -> drain invite server, close
 # MongoDB) room to finish; its own 10s watchdog force-exits well before this.
