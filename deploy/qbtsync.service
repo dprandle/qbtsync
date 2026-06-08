@@ -3,6 +3,8 @@ Description=qbtsync — QuickBooks Time <-> UberMail MongoDB sync + invite serve
 Documentation=https://github.com/dprandle/qbtsync
 After=network-online.target
 Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
 
 [Service]
 Type=simple
@@ -28,8 +30,6 @@ ExecStart=/usr/bin/node dist/index.js
 # Restart on crash; don't hammer on a hard config/build failure.
 Restart=on-failure
 RestartSec=10s
-StartLimitIntervalSec=300
-StartLimitBurst=5
 
 # Give the in-process graceful shutdown (SIGTERM -> drain invite server, close
 # MongoDB) room to finish; its own 10s watchdog force-exits well before this.
