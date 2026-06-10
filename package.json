@@ -11,8 +11,8 @@
         "bootstrap": "npm run build && node dist/bootstrap.js",
         "start": "npm run build && node dist/index.js",
         "reset": "npm run build && node dist/index.js --reset",
-        "wipe": "npm run build && node dist/index.js --reset"
-        "deploy": "tools/deploy.sh"
+        "wipe": "npm run build && node dist/index.js --reset",
+        "deploy": "tools/deploy.sh",
         "watch": "tools/watch.sh"
     },
     "dependencies": {
