@@ -213,6 +213,7 @@ export async function bootstrap_jobcodes(qbt: qbt_client): Promise<void> {
 async function bootstrap_users_loop(
     qbt: qbt_client,
     hres_by_email: Map<string, hresource_doc>,
+    hres_by_name: Map<string, hresource_doc>,
     active: active_param
 ): Promise<qbt_user[]> {
     const map_col = mongo.get_qbt_map_objects();
@@ -225,8 +226,12 @@ async function bootstrap_users_loop(
         // Match emails up front (cheap, in-memory) so we know which hres ids to prefetch.
         const matched_hres = new Map<number, hresource_doc>(); // qbt user id -> hres
         for (const qusr of users) {
+            const uname = normalize_full_name(qusr.first_name, qusr.last_name);
             const hres =
-                hres_by_email.get(normalize_email(qusr.email)) ?? hres_by_email.get(normalize_email(qusr.username));
+                hres_by_email.get(normalize_email(qusr.email)) ??
+                hres_by_email.get(normalize_email(qusr.username)) ??
+                hres_by_name.get(uname) ??
+                (qusr.id == 1127534 ? hres_by_email.get("daniel@zetrickllc.com") : null);
             if (hres) matched_hres.set(qusr.id, hres);
         }
 
@@ -281,6 +286,12 @@ function is_employee_or_mgr(hres: hresource_doc): boolean {
     return hres.allowed_roles.some((r) => EMP_MGR_ROLE_KEYS.has(r.source_str));
 }
 
+function normalize_full_name(first_name: string, last_name: string): string {
+    const name = (first_name + last_name).toLowerCase();
+    name.replace(/\s+/g, "");
+    return name;
+}
+
 export async function bootstrap_users(qbt: qbt_client): Promise<void> {
     if (get_sync_state().users.bootstrap_complete) return;
     ilog("[usi] Running bootstrap: matching users to hresources by email...");
@@ -299,9 +310,19 @@ export async function bootstrap_users(qbt: qbt_client): Promise<void> {
         hres_by_email.set(email, h);
     }
 
+    const hres_by_name = new Map<string, hresource_doc>();
+    for (const h of employees_and_mgrs) {
+        const name = normalize_full_name(h.first_name, h.last_name);
+        const existing = hres_by_name.get(name);
+        if (existing) {
+            throw new Error(`Duplicate hresource for name ${name} -- existing: ${existing._id} dup: ${h._id}`);
+        }
+        hres_by_name.set(name, h);
+    }
+
     // Do active users first, then non active users as we want our active ones to take priority
-    const active_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "yes");
-    const archived_nomatches = await bootstrap_users_loop(qbt, hres_by_email, "no");
+    const active_nomatches = await bootstrap_users_loop(qbt, hres_by_email, hres_by_name, "yes");
+    const archived_nomatches = await bootstrap_users_loop(qbt, hres_by_email, hres_by_name, "no");
     for (const u of archived_nomatches) {
         ilog(`[usi] Could not find matching hres for archived ${get_user_log_str(u)}`);
     }
