@@ -195,8 +195,8 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
     const user_map = batch.user_maps.get(ts.user_id);
     const jobcode_map = batch.jc_maps.get(ts.jobcode_id);
     if (!user_map || !jobcode_map) {
-        const jcstat = jobcode_map ? `ok (${jobcode_map.qbt_id})` : "missing";
-        const usrstat = user_map ? `ok (${user_map.qbt_id})` : "missing";
+        const jcstat = jobcode_map ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})` : `${ts.jobcode_id} -> missing`;
+        const usrstat = user_map ? `ok (${user_map.qbt_id} -> ${user_map.our_id})` : `${ts.user_id} -> missing`;
         // The user and/or jobcode haven't synced yet; skip so this is retried
         // once those loops create the mappings (symmetric with outbound_sync).
         wlog(`[ts] Skipping without cursor advance - waiting on map entries -- jc:${jcstat} | usr: ${usrstat}`);
