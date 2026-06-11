@@ -96,7 +96,12 @@ function day_start(start: Date, tz_bytes: number[]): Date {
     return new Date(`${year}-${month}-${day}T00:00:00Z`);
 }
 
-function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: contract_route_doc): time_record {
+// `cont` is null for uncharged time (QBT jobcode_id 0): the worker logged time
+// without picking a jobcode, so there's no contract to map. We still record the time,
+// with an empty cont_id. Without a contract we have no timezone to derive the work
+// day from, so we use QBT's own ts.date (already the work-local YYYY-MM-DD) parsed at
+// UTC midnight — the same shape day_start produces for the charged case.
+function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: contract_route_doc | null): time_record {
     const start = new Date(ts.start);
     const end = ts.end ? new Date(ts.end) : INVALID_DATETIME;
     const ci = make_ci_now(` (${ts.location})`);
@@ -108,11 +113,11 @@ function timesheet_to_time_record(ts: qbt_timesheet, hres_id: string, cont: cont
         created: ci,
         schema_version: TIME_RECORD_SCHEMA_VERSION,
         hrid: hres_id,
-        cont_id: cont._id,
+        cont_id: cont ? cont._id : "",
         notes: ts.notes,
         start,
         end,
-        date: day_start(start, cont.timezone),
+        date: cont ? day_start(start, cont.timezone) : new Date(`${ts.date}T00:00:00Z`),
     };
 }
 
@@ -209,16 +214,22 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
         return true;
     }
 
-    const jobcode_map = batch.jc_maps.get(ts.jobcode_id);
-    if (!jobcode_map && QBT_JOBCODE_IDS_NO_CONT.has(ts.jobcode_id)) {
+    // jobcode_id 0 is uncharged time: the worker logged time in the QBT app without
+    // picking a jobcode (often because none was available to them). We still ingest it
+    // as a time_record, just with an empty cont_id and no jobcode mapping required.
+    const uncharged = ts.jobcode_id === 0;
+    const jobcode_map = uncharged ? undefined : batch.jc_maps.get(ts.jobcode_id);
+    if (!uncharged && !jobcode_map && QBT_JOBCODE_IDS_NO_CONT.has(ts.jobcode_id)) {
         wlog(`[ts] Skipping with cursor advance - got known jobcode id that doesn't match to contract -- jc: ${ts.jobcode_id}`);
         return true;
     }
-    
-    if (!user_map || !jobcode_map) {
-        const jcstat = jobcode_map
-            ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})`
-            : `${ts.jobcode_id} -> missing`;
+
+    if (!user_map || (!uncharged && !jobcode_map)) {
+        const jcstat = uncharged
+            ? "uncharged (jc 0)"
+            : jobcode_map
+              ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})`
+              : `${ts.jobcode_id} -> missing`;
         const usrstat = user_map ? `ok (${user_map.qbt_id} -> ${user_map.our_id})` : `${ts.user_id} -> missing`;
         // The user and/or jobcode haven't synced yet; skip so this is retried
         // once those loops create the mappings (symmetric with outbound_sync).
@@ -239,8 +250,11 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
         const updates: Partial<time_record> = {};
         // We don't support updating start/date
         if (!dates_equal(trec.end, ts.end)) updates.end = ts.end ? new Date(ts.end) : INVALID_DATETIME;
-        // Handle update jobcode... for now. Probably will remove this later
-        if (trec.cont_id !== jobcode_map.our_id) updates.cont_id = jobcode_map.our_id;
+        // Handle update jobcode... for now. Probably will remove this later. Uncharged
+        // (jobcode 0) resolves to an empty cont_id, so a worker clearing or setting a
+        // jobcode flips cont_id accordingly.
+        const desired_cont = jobcode_map ? jobcode_map.our_id : "";
+        if (trec.cont_id !== desired_cont) updates.cont_id = desired_cont;
         if (trec.notes !== ts.notes) {
             updates.notes = ts.notes;
         }
@@ -262,9 +276,11 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
         mapping.qbt_modified = incoming_modified;
         ilog(`[ts] Updated mapping ${mapping._id} with updated ts last mod ${ts.last_modified}`);
     } else {
-        const cont = batch.conts.get(jobcode_map.our_id);
-        if (!cont) throw Error("Failed to fetch contract with id " + jobcode_map.our_id);
-        const trec = timesheet_to_time_record(ts, user_map.our_id, cont);
+        // No jobcode_map for uncharged time (jobcode 0) — cont stays null and the trec
+        // gets an empty cont_id. Charged time must resolve to a real contract.
+        const cont = jobcode_map ? batch.conts.get(jobcode_map.our_id) : undefined;
+        if (jobcode_map && !cont) throw Error("Failed to fetch contract with id " + jobcode_map.our_id);
+        const trec = timesheet_to_time_record(ts, user_map.our_id, cont ?? null);
         batch.trec_ops.push({ insertOne: { document: trec } });
         batch.trecs.set(trec._id, trec);
         const map_obj = create_qbt_object_map_item(ts.id, trec._id, "timesheet", incoming_modified);
