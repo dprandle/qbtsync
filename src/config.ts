@@ -42,4 +42,11 @@ export const config = {
     // and any out-of-band calls. Applied across all four HTTP verbs.
     qbt_rate_limit_max_requests: optional_int("QBT_RATE_LIMIT_MAX_REQUESTS", 260),
     qbt_rate_limit_window_ms: optional_int("QBT_RATE_LIMIT_WINDOW_MS", 5 * 60 * 1000),
+    // Outbound timesheet sync processes changed time_records in batches of this size
+    // rather than loading the whole changed set at once. On the first run the cursor
+    // is at epoch, so the changed set is the entire collection — materializing it (and
+    // its prefetch caches) in one array OOMs the heap. Batching caps memory and lets
+    // the cursor advance per batch so a crash resumes near where it stopped. Requires
+    // a Mongo index on time_records {"last_update.on": 1} (the batches are sorted by it).
+    outbound_ts_batch_size: optional_int("OUTBOUND_TS_BATCH_SIZE", 5000),
 };

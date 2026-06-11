@@ -555,22 +555,24 @@ async function process_time_record_update(
     return true;
 }
 
-export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise<void> {
-    const state = get_sync_state();
-    const since = state.timesheets.outbound_last_synced ?? CURSOR_EPOCH;
-    ilog(`[ts] Delta sync since: ${since.toISOString()}`);
-
-    const changed = await mongo
-        .get_trecs()
-        .find({ "last_update.on": { $gt: since } })
-        .toArray();
-    const cache = await load_outbound_ts_cache(changed, qbt);
-
-    const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
-    for (let i = 0; i < changed.length; ++i) {
-        const trec = changed[i];
+// Processes one batch of changed time_records: prefetches its read cache, runs each
+// item, then persists the cursor. Mutates `progress` in place and returns the number
+// of items processed. Batches arrive in ascending last_update.on order, so flooring
+// the cursor at the earliest unresolved item (via safe_cursor) keeps a per-batch save
+// from ever jumping past an item a later batch hasn't reached yet.
+async function process_outbound_batch(
+    batch: time_record[],
+    batch_num: number,
+    base: number,
+    since: Date,
+    progress: cursor_progress,
+    qbt: qbt_client
+): Promise<void> {
+    const cache = await load_outbound_ts_cache(batch, qbt);
+    for (let i = 0; i < batch.length; ++i) {
+        const trec = batch[i];
         const at = trec.last_update.on;
-        ilog(`[ts] Processing update for ${get_time_record_log_str(trec)} (${i + 1} of ${changed.length})`);
+        ilog(`[ts] Processing update for ${get_time_record_log_str(trec)} (#${base + i + 1}, batch ${batch_num})`);
         try {
             const resolved = await process_time_record_update(trec, qbt, cache);
             if (resolved) {
@@ -589,8 +591,49 @@ export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise
     const latest = safe_cursor(progress, since);
     if (latest > since) {
         save_timesheet_state({ outbound_last_synced: latest });
-        ilog(`[ts] Outbound cursor advanced to ${latest.toISOString()}`);
-    } else {
-        ilog("[ts] No outbound changes.");
+        ilog(`[ts] Outbound cursor advanced to ${latest.toISOString()} (after batch ${batch_num})`);
     }
+}
+
+export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise<void> {
+    const state = get_sync_state();
+    const since = state.timesheets.outbound_last_synced ?? CURSOR_EPOCH;
+    ilog(`[ts] Delta sync since: ${since.toISOString()}`);
+
+    // Stream the changed set in ascending last_update.on order and process it in
+    // bounded batches instead of one giant toArray(): on the first run `since` is
+    // epoch, so the changed set is the entire time_records collection and loading it
+    // (plus the per-batch prefetch caches) at once OOMs the heap. The sort requires a
+    // Mongo index on {"last_update.on": 1}; without one a large result set blows the
+    // server-side sort memory limit. noCursorTimeout keeps the cursor alive across the
+    // slow, rate-limited QBT writes of a batch (a full batch can exceed the default
+    // 10-minute idle timeout); the for-await closes it on completion or throw.
+    const db_cursor = mongo
+        .get_trecs()
+        .find({ "last_update.on": { $gt: since } }, { noCursorTimeout: true })
+        .sort({ "last_update.on": 1 });
+
+    const progress: cursor_progress = { latest_resolved: since, earliest_unresolved: null };
+    let batch: time_record[] = [];
+    let processed = 0;
+    let batch_num = 0;
+
+    for await (const trec of db_cursor) {
+        batch.push(trec);
+        if (batch.length >= config.outbound_ts_batch_size) {
+            batch_num++;
+            ilog(`[ts] Processing outbound batch ${batch_num} (${batch.length} trecs)`);
+            await process_outbound_batch(batch, batch_num, processed, since, progress, qbt);
+            processed += batch.length;
+            batch = [];
+        }
+    }
+    if (batch.length > 0) {
+        batch_num++;
+        ilog(`[ts] Processing outbound batch ${batch_num} (${batch.length} trecs)`);
+        await process_outbound_batch(batch, batch_num, processed, since, progress, qbt);
+        processed += batch.length;
+    }
+
+    if (processed === 0) ilog("[ts] No outbound changes.");
 }
