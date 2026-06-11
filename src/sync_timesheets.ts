@@ -32,6 +32,12 @@ export type time_record = {
     date: Date;
 };
 
+// These are qbt users that never had an HRES - we keep them here in case we encounter any timesheets with them
+const NONSENSE_QBT_USER_IDS = new Set([
+    1200741, 1200896, 1833712, 1285222, 1285225, 1255926, 1853612, 1853634, 54199, 1266424, 1266726, 1257013, 1537602,
+    1537620, 1241586, 1283131,
+]);
+
 function short_date_str(d: Date): string {
     return d.toISOString().slice(0, 10);
 }
@@ -193,9 +199,16 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
 
     // Reverse-map the QBT user/jobcode to our ids.
     const user_map = batch.user_maps.get(ts.user_id);
+    if (!user_map && NONSENSE_QBT_USER_IDS.has(ts.user_id)) {
+        wlog(`[ts] Skipping with cursor advance - got known user id that doesn't match to hres -- usr: ${ts.user_id}`);
+        return true;
+    }
+
     const jobcode_map = batch.jc_maps.get(ts.jobcode_id);
     if (!user_map || !jobcode_map) {
-        const jcstat = jobcode_map ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})` : `${ts.jobcode_id} -> missing`;
+        const jcstat = jobcode_map
+            ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})`
+            : `${ts.jobcode_id} -> missing`;
         const usrstat = user_map ? `ok (${user_map.qbt_id} -> ${user_map.our_id})` : `${ts.user_id} -> missing`;
         // The user and/or jobcode haven't synced yet; skip so this is retried
         // once those loops create the mappings (symmetric with outbound_sync).

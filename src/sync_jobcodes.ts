@@ -13,7 +13,7 @@ import {
 import { is_awarded, EMP_ACTIVE_ROLE_KEYS, reconcile_jc_assignments_by_jobcode } from "./assignments";
 
 // Collect the hresource ids linked to a contract under any employee role.
-function emp_hres_ids(cont: contract_route_doc): Set<string> {
+export function emp_hres_ids(cont: contract_route_doc): Set<string> {
     const ids = new Set<string>();
     for (const [role_key, links] of Object.entries(cont.assignments)) {
         if (!EMP_ACTIVE_ROLE_KEYS.has(role_key)) continue;
@@ -46,6 +46,15 @@ export function get_current_route_name(cont: contract_route_doc): string {
     return ind !== INVALID_IND ? cont.route_names[ind].val : "";
 }
 
+// The QBT jobcode display name: route_num with the route name in parens so the
+// jobcode is identifiable, since route_num is not guaranteed unique. Falls back to
+// whichever piece is present (route name alone when there's no route_num).
+function jobcode_name(cont: contract_route_doc): string {
+    const rname = get_current_route_name(cont);
+    if (cont.route_num && rname) return `${cont.route_num} (${rname})`;
+    return cont.route_num || rname;
+}
+
 export function should_have_active_qbt_jobcode(cont: contract_route_doc): boolean {
     return is_active(cont.archived_info.on) && is_awarded(cont);
 }
@@ -62,7 +71,6 @@ export function get_jobcode_log_str(jc: qbt_jobcode) {
 async function process_contract_update(cont: contract_route_doc, qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_active_qbt_jobcode(cont);
-    const cur_rname = get_current_route_name(cont);
     // A contract may have several linked QBT jobcodes (historical duplicates);
     // reconcile the primary (lowest link_id) — the canonical live jobcode. Duplicates
     // are archived and only kept so their old timesheets resolve inbound.
@@ -77,7 +85,8 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         // other updates on archived jobcodes as long as one of updates is setting the jobcode to active
         if (want) {
             if (!jci.active) updates.active = true;
-            if (cont.route_num && jci.name !== cont.route_num) updates.name = cont.route_num;
+            const desired_name = jobcode_name(cont);
+            if (cont.route_num && jci.name !== desired_name) updates.name = desired_name;
         } else if (jci.active) {
             updates.active = false;
         }
@@ -99,7 +108,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         }
     } else if (want) {
         jci = await qbt.create_jobcode({
-            name: cont.route_num || cur_rname,
+            name: jobcode_name(cont),
             jobcode_type: "regular",
         });
         const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
