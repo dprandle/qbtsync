@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { qbt_rate_limiter } from "./rate_limiter";
 import {
     qbt_client,
     fetch_timesheets_opts,
@@ -30,6 +31,7 @@ async function qbt_get(path: string, params: Record<string, string>): Promise<un
     for (const [key, val] of Object.entries(params)) {
         url.searchParams.set(key, val);
     }
+    await qbt_rate_limiter.acquire();
     const resp = await fetch(url.toString(), {
         headers: {
             Authorization: `Bearer ${config.qbt_access_token}`,
@@ -44,6 +46,7 @@ async function qbt_get(path: string, params: Record<string, string>): Promise<un
 }
 
 async function qbt_post(path: string, body: unknown): Promise<unknown> {
+    await qbt_rate_limiter.acquire();
     const resp = await fetch(`${BASE_URL}${path}`, {
         method: "POST",
         headers: {
@@ -60,6 +63,7 @@ async function qbt_post(path: string, body: unknown): Promise<unknown> {
 }
 
 async function qbt_put(path: string, body: unknown): Promise<unknown> {
+    await qbt_rate_limiter.acquire();
     const resp = await fetch(`${BASE_URL}${path}`, {
         method: "PUT",
         headers: {
@@ -88,6 +92,7 @@ async function qbt_delete(path: string, params: Record<string, string>): Promise
     for (const [key, val] of Object.entries(params)) {
         url.searchParams.set(key, val);
     }
+    await qbt_rate_limiter.acquire();
     const resp = await fetch(url.toString(), {
         method: "DELETE",
         headers: {

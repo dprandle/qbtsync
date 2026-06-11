@@ -36,4 +36,10 @@ export const config = {
     // safety net for hard-deletes the delta loops structurally can't see, so it's
     // meant to run rarely. Default: 7 days.
     mapping_cleanup_interval_ms: optional_int("MAPPING_CLEANUP_INTERVAL_MS", 7 * 24 * 60 * 60 * 1000),
+    // QBT's live API rejects (HTTP 429) more than a fixed number of requests per
+    // rolling window (300 / 5 min on our plan). We self-throttle every outbound
+    // QBT request below that ceiling; the default leaves headroom for clock skew
+    // and any out-of-band calls. Applied across all four HTTP verbs.
+    qbt_rate_limit_max_requests: optional_int("QBT_RATE_LIMIT_MAX_REQUESTS", 260),
+    qbt_rate_limit_window_ms: optional_int("QBT_RATE_LIMIT_WINDOW_MS", 5 * 60 * 1000),
 };
