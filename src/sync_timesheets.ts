@@ -1,7 +1,7 @@
 import mongo from "./db";
 import type { AnyBulkWriteOperation } from "mongodb";
 import { save_timesheet_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item, type qbt_object_map } from "./qbt_object_map";
+import { create_qbt_object_map_item, primary_by_our_id, type qbt_object_map } from "./qbt_object_map";
 import { qbt_client, fetch_all_by_ids, type qbt_timesheet } from "./qbt_client_interface";
 import {
     INVALID_DATETIME,
@@ -377,8 +377,12 @@ async function load_outbound_ts_cache(trecs: time_record[], qbt: qbt_client): Pr
 
     return {
         ts_maps: new Map(ts_map_docs.map((m) => [m.our_id, m])),
-        user_maps: new Map(user_map_docs.map((m) => [m.our_id, m])),
-        jc_maps: new Map(jc_map_docs.map((m) => [m.our_id, m])),
+        // New timesheets are created under the primary (lowest link_id) user/jobcode
+        // per hres/contract — duplicate links are archived objects kept only so their
+        // existing timesheets resolve inbound, never for new writes. (Timesheets are
+        // 1:1 with a trec, so ts_maps needs no primary selection.)
+        user_maps: primary_by_our_id(user_map_docs),
+        jc_maps: primary_by_our_id(jc_map_docs),
         qbt_ts: new Map(qbt_list.map((t) => [t.id, t])),
         hres: new Map(hres_docs.map((h) => [h._id, h])),
         conts: new Map(cont_docs.map((c) => [c._id, c])),

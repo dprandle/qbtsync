@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item } from "./qbt_object_map";
+import { create_qbt_object_map_item, primary_by_our_id } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids } from "./qbt_client_interface";
 import {
     change_info,
@@ -63,10 +63,10 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_active_qbt_jobcode(cont);
     const cur_rname = get_current_route_name(cont);
-    const mapping = await map_col.findOne({
-        type: "jobcode",
-        our_id: cont._id,
-    });
+    // A contract may have several linked QBT jobcodes (historical duplicates);
+    // reconcile the primary (lowest link_id) — the canonical live jobcode. Duplicates
+    // are archived and only kept so their old timesheets resolve inbound.
+    const mapping = await map_col.findOne({ type: "jobcode", our_id: cont._id }, { sort: { link_id: 1 } });
 
     let jci: qbt_jobcode | null = null;
     if (mapping) {
@@ -123,7 +123,9 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
     const desired = new Set<number>();
     if (hres_ids.length > 0) {
         const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
-        const qbt_user_ids = user_maps.map((r) => r.qbt_id);
+        // Assign the primary user per hres; duplicate-link users are archived
+        // leftovers we don't push new assignments onto.
+        const qbt_user_ids = [...primary_by_our_id(user_maps).values()].map((r) => r.qbt_id);
         const usrs = await fetch_all_by_ids(qbt_user_ids, (ids) => qbt.fetch_users({ ids, active: "yes" }));
         usrs.forEach((u) => desired.add(u.id));
     }

@@ -48,7 +48,10 @@ async function handle_invite(qbt: qbt_client, req: FastifyRequest<{ Body: invite
     // Prefer an existing QBT user: if this hres is already mapped to one,
     // invite by user_id. Otherwise fall back to the hresource's own contact
     // details matching the requested method.
-    const mapping = await mongo.get_qbt_map_objects().findOne({ type: "user", our_id: hres_id });
+    // Invite the primary (lowest link_id) QBT user if this hres has several links.
+    const mapping = await mongo
+        .get_qbt_map_objects()
+        .findOne({ type: "user", our_id: hres_id }, { sort: { link_id: 1 } });
     if (!mapping) {
         return reply.code(404).send({
             message:

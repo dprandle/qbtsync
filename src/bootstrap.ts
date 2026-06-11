@@ -105,13 +105,18 @@ async function bootstrap_jobcodes_loop(
             if (match) matched_cont.set(jc.id, match);
         }
 
-        // Prefetch existing mappings by our_id. linked_our is written through below so two
-        // jobcodes matching the same contract in one page don't both insert — that would
-        // violate the unique (type, our_id) index and abort the transaction.
+        // Prefetch existing links by our_id so re-runs continue the sequence rather
+        // than colliding. A contract may now carry several links (historical duplicate
+        // jobcodes), so track the highest link_id seen per contract; max_link is
+        // written through below so two duplicates matching the same contract within one
+        // page also get distinct, increasing link_ids.
         const by_our_docs = await map_col
             .find({ type: "jobcode", our_id: { $in: [...new Set([...matched_cont.values()].map((c) => c._id))] } })
             .toArray();
-        const linked_our = new Map(by_our_docs.map((m) => [m.our_id, m]));
+        const max_link = new Map<string, number>();
+        for (const m of by_our_docs) {
+            max_link.set(m.our_id, Math.max(max_link.get(m.our_id) ?? -1, m.link_id ?? 0));
+        }
         const inserts: AnyBulkWriteOperation<qbt_object_map>[] = [];
 
         for (const jc of jobcodes) {
@@ -127,18 +132,17 @@ async function bootstrap_jobcodes_loop(
                 continue;
             }
 
-            const already_mapped = linked_our.get(match._id);
-            if (already_mapped) {
-                ilog(
-                    `[jc] Found match ${get_contract_log_str(match)} for ${get_jobcode_log_str(jc)} but contract already linked to ${already_mapped.qbt_id}`
-                );
-                continue;
-            }
-
-            const map_obj = create_qbt_object_map_item(jc.id, match._id, "jobcode", new Date(jc.last_modified));
+            // Link every matching jobcode, not just the first. Active jobcodes are
+            // bootstrapped before archived ones, so the live jobcode takes link_id 0
+            // (the primary used for outbound writes) and archived duplicates take
+            // higher ids, kept only so their old timesheets resolve inbound.
+            const link_id = (max_link.get(match._id) ?? -1) + 1;
+            max_link.set(match._id, link_id);
+            const map_obj = create_qbt_object_map_item(jc.id, match._id, "jobcode", new Date(jc.last_modified), link_id);
             inserts.push({ insertOne: { document: map_obj } });
-            linked_our.set(match._id, map_obj); // write-through: claim this contract for the rest of the page
-            ilog(`[jc] Bootstrap mapped contract ${get_contract_log_str(match)} → ${get_jobcode_log_str(jc)}`);
+            ilog(
+                `[jc] Bootstrap linked contract ${get_contract_log_str(match)} → ${get_jobcode_log_str(jc)} (link ${link_id})`
+            );
         }
 
         if (inserts.length > 0) await mongo.with_transaction((session) => map_col.bulkWrite(inserts, { session }));
@@ -235,10 +239,11 @@ async function bootstrap_users_loop(
             if (hres) matched_hres.set(qusr.id, hres);
         }
 
-        // Prefetch existing mappings for this page: by qbt_id (this QBT user already
-        // linked) and by our_id (this hres already linked). linked_our is written
-        // through below so two QBT users matching the same hres in one page don't both
-        // insert — that would violate the unique (type, our_id) index and abort the txn.
+        // Prefetch existing maps for this page: by qbt_id (this QBT user already
+        // linked → idempotent skip) and by our_id (existing links for the matched
+        // hres). An hres may now carry several links (historical duplicate users), so
+        // track the highest link_id per hres; max_link is written through below so two
+        // duplicates matching the same hres within one page get distinct link_ids.
         const [by_qbt_docs, by_our_docs] = await Promise.all([
             map_col.find({ type: "user", qbt_id: { $in: users.map((u) => u.id) } }).toArray(),
             map_col
@@ -246,7 +251,10 @@ async function bootstrap_users_loop(
                 .toArray(),
         ]);
         const linked_qbt = new Map(by_qbt_docs.map((m) => [m.qbt_id, m]));
-        const linked_our = new Map(by_our_docs.map((m) => [m.our_id, m]));
+        const max_link = new Map<string, number>();
+        for (const m of by_our_docs) {
+            max_link.set(m.our_id, Math.max(max_link.get(m.our_id) ?? -1, m.link_id ?? 0));
+        }
         const inserts: AnyBulkWriteOperation<qbt_object_map>[] = [];
 
         for (const qusr of users) {
@@ -263,16 +271,15 @@ async function bootstrap_users_loop(
                 continue;
             }
 
-            const already_mapped = linked_our.get(hres._id);
-            if (already_mapped) {
-                ilog(`[usi] Found match ${get_hres_log_str(hres)} but hres already linked to ${already_mapped.qbt_id}`);
-                continue;
-            }
-
-            const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified));
+            // Link every matching user, not just the first. Active users are
+            // bootstrapped before archived ones, so the live user takes link_id 0
+            // (the primary used for outbound writes) and archived duplicates take
+            // higher ids, kept only so their old timesheets resolve inbound.
+            const link_id = (max_link.get(hres._id) ?? -1) + 1;
+            max_link.set(hres._id, link_id);
+            const map_obj = create_qbt_object_map_item(qusr.id, hres._id, "user", new Date(qusr.last_modified), link_id);
             inserts.push({ insertOne: { document: map_obj } });
-            linked_our.set(hres._id, map_obj); // write-through: claim this hres for the rest of the page
-            ilog(`[usi] Bootstrap mapped hres ${get_hres_log_str(hres)} → ${get_user_log_str(qusr)}`);
+            ilog(`[usi] Bootstrap linked hres ${get_hres_log_str(hres)} → ${get_user_log_str(qusr)} (link ${link_id})`);
         }
 
         if (inserts.length > 0) await mongo.with_transaction((session) => map_col.bulkWrite(inserts, { session }));

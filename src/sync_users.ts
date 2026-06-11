@@ -1,6 +1,6 @@
 import mongo from "./db";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
-import { create_qbt_object_map_item } from "./qbt_object_map";
+import { create_qbt_object_map_item, primary_by_our_id } from "./qbt_object_map";
 import { change_info, is_active, make_ci_now, uid } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids } from "./qbt_client_interface";
 import { EMP_ACTIVE_ROLE_KEYS, is_awarded, reconcile_jc_assignments_by_user } from "./assignments";
@@ -48,7 +48,10 @@ export function normalize_phone_number(phone_str: string): string {
 async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     const want = should_have_qbt_user(hres.tt_flags, hres.archived_info.on);
-    const mapping = await map_col.findOne({ type: "user", our_id: hres._id });
+    // An hres may have several linked QBT users (historical duplicates); reconcile
+    // the primary (lowest link_id) — the canonical live user. Duplicates are
+    // archived and only kept so their old timesheets resolve inbound.
+    const mapping = await map_col.findOne({ type: "user", our_id: hres._id }, { sort: { link_id: 1 } });
 
     let usi: qbt_user | null = null;
     if (mapping) {
@@ -122,7 +125,9 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client): Promis
     const desired = new Set<number>();
     if (cont_ids.length > 0) {
         const cont_maps = await map_col.find({ type: "jobcode", our_id: { $in: cont_ids } }).toArray();
-        const qbt_jc_ids = cont_maps.map((r) => r.qbt_id);
+        // Assign against the primary jobcode per contract; duplicate-link jobcodes
+        // are archived leftovers we don't push new assignments onto.
+        const qbt_jc_ids = [...primary_by_our_id(cont_maps).values()].map((r) => r.qbt_id);
         const jcs = await fetch_all_by_ids(qbt_jc_ids, (ids) => qbt.fetch_jobcodes({ ids, active: "yes" }));
         jcs.forEach((jc) => desired.add(jc.id));
     }
