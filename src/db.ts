@@ -17,7 +17,7 @@ let db: Db;
 let mock_db: Db;
 
 async function connect(): Promise<void> {
-    client = new MongoClient(config.mongo_uri);
+    client = new MongoClient(config.mongo_uri, { appName: `qbtsync-${config.qbt_env}` });
     await client.connect();
     db = client.db(config.mongo_db_name);
     mock_db = client.db(config.mock_qbt_db_name);
