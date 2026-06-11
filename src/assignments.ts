@@ -74,14 +74,9 @@ export async function reconcile_jc_assignments_by_jobcode(
     ilog(`[jca] Finished sync - ${txt}`);
 }
 
-// Reconcile a single QBT user's assignments against the desired set of active QBT
-// jobcode ids. Pass an empty set to remove every assignment for the user.
-export async function reconcile_jc_assignments_by_user(
-    qbt: qbt_client,
-    user_id: number,
-    desired_jobcode_ids: Set<number>
-): Promise<void> {
-    const actual = new Map<number, number>(); // jobcode_id → assignment id
+// One QBT user's active jobcode assignments as jobcode_id -> assignment id.
+async function fetch_active_assignments_for_user(qbt: qbt_client, user_id: number): Promise<Map<number, number>> {
+    const actual = new Map<number, number>();
     let page = 1;
     while (true) {
         const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ user_ids: [user_id], page });
@@ -91,11 +86,55 @@ export async function reconcile_jc_assignments_by_user(
         if (!more) break;
         page++;
     }
+    return actual;
+}
+
+// Prefetch active assignments for many users in one batched pass. QBT's
+// jobcode_assignments endpoint accepts user_ids (plural), so each page covers up
+// to 100 users at once — collapsing what was one paginated GET *per user* into
+// ceil(total_assignments / 100) reads, the dominant cost of the per-hres path.
+// Returns user_id -> (jobcode_id -> assignment id); every requested user is
+// present (empty map when it has none) so callers never need a fallback fetch.
+export async function prefetch_active_assignments_by_user(
+    qbt: qbt_client,
+    user_ids: number[]
+): Promise<Map<number, Map<number, number>>> {
+    const out = new Map<number, Map<number, number>>();
+    for (const id of user_ids) out.set(id, new Map());
+    // 100 = QBT's page cap; a chunk of <=100 user_ids still spans multiple pages
+    // when those users have many assignments between them, so paginate each chunk.
+    for (let i = 0; i < user_ids.length; i += 100) {
+        const chunk = user_ids.slice(i, i + 100);
+        let page = 1;
+        while (true) {
+            const { items, more } = await qbt.fetch_jobcode_assignments({ user_ids: chunk, page });
+            for (const a of items) {
+                if (a.active) out.get(a.user_id)?.set(a.jobcode_id, a.id);
+            }
+            if (!more) break;
+            page++;
+        }
+    }
+    return out;
+}
+
+// Reconcile a single QBT user's assignments against the desired set of active QBT
+// jobcode ids. Pass an empty set to remove every assignment for the user. `actual`
+// is the user's current active assignments (jobcode_id -> assignment id); the delta
+// loop passes a prefetched map to avoid a per-user GET, and it's fetched for this
+// one user when omitted.
+export async function reconcile_jc_assignments_by_user(
+    qbt: qbt_client,
+    user_id: number,
+    desired_jobcode_ids: Set<number>,
+    actual?: Map<number, number>
+): Promise<void> {
+    const current = actual ?? (await fetch_active_assignments_for_user(qbt, user_id));
 
     let create_ops = 0;
     let delete_ops = 0;
     for (const jobcode_id of desired_jobcode_ids) {
-        if (!actual.has(jobcode_id)) {
+        if (!current.has(jobcode_id)) {
             try {
                 await qbt.create_jobcode_assignment(user_id, jobcode_id);
                 ++create_ops;
@@ -106,7 +145,7 @@ export async function reconcile_jc_assignments_by_user(
         }
     }
 
-    for (const [jobcode_id, asgn_id] of actual) {
+    for (const [jobcode_id, asgn_id] of current) {
         if (!desired_jobcode_ids.has(jobcode_id)) {
             try {
                 await qbt.delete_jobcode_assignment(asgn_id);
