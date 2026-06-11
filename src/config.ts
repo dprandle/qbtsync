@@ -31,11 +31,20 @@ export const config = {
     // tick keeps that shared state deterministic and free of interleaving. N=1
     // reconciles entities on every tick (the previous equal-interval behavior).
     entity_sync_every_n_ticks: optional_int("ENTITY_SYNC_EVERY_N_TICKS", 1),
-    // How often the full qbt-object-map cleanup runs (wall-clock, checked against
-    // the persisted last_run so it survives restarts). This is a reconciliation
-    // safety net for hard-deletes the delta loops structurally can't see, so it's
-    // meant to run rarely. Default: 7 days.
-    mapping_cleanup_interval_ms: optional_int("MAPPING_CLEANUP_INTERVAL_MS", 7 * 24 * 60 * 60 * 1000),
+    // The full qbt-object-map cleanup is a heavy, rate-limited full scan — a
+    // reconciliation safety net for hard-deletes the delta loops structurally can't
+    // see. It stays in the single sync loop (so it never races the other passes over
+    // the shared map/QBT, and shares the one rate limiter), but is confined to a
+    // low-traffic window so its long scan can't stall the live sync mid-day. The
+    // window is the scheduler: it runs once per window opening (drift-free, gated on
+    // the persisted last_run). Times are the SERVER's local timezone. Day is
+    // 0=Sunday..6=Saturday, or -1 for any day (a daily window). The window spans
+    // [start_hour, start_hour + window_hours) and must not cross midnight
+    // (start_hour + window_hours <= 24). Make window_hours comfortably larger than one
+    // sync tick so a tick reliably lands inside it. Default: Sundays 08:00–09:00 (considering UTC).
+    mapping_cleanup_day: optional_int("MAPPING_CLEANUP_DAY", 0),
+    mapping_cleanup_start_hour: optional_int("MAPPING_CLEANUP_START_HOUR", 8),
+    mapping_cleanup_window_hours: optional_int("MAPPING_CLEANUP_WINDOW_HOURS", 1),
     // QBT's live API rejects (HTTP 429) more than a fixed number of requests per
     // rolling window (300 / 5 min on our plan). We self-throttle every outbound
     // QBT request below that ceiling; the default leaves headroom for clock skew

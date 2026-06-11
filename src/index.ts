@@ -67,9 +67,10 @@ async function run_sync_loop(qbt: qbt_client): Promise<void> {
             elog("[ts] Pass error:", err);
         }
         // Cleanup runs last, with the other passes provably idle (single loop), and
-        // only every config.mapping_cleanup_interval_ms. last_run is stamped only on a
-        // clean completion, so an error retries next tick rather than waiting a full
-        // interval; per-batch failures inside the pass are logged and don't throw.
+        // only when cleanup_due() says we're in the configured low-traffic window (see
+        // config). last_run is stamped only on a clean completion, so an error retries
+        // on the next tick still inside the window rather than skipping a whole week;
+        // per-batch failures inside the pass are logged and don't throw.
         if (cleanup_due(new Date())) {
             try {
                 await run_qbt_mapping_cleanup(qbt);

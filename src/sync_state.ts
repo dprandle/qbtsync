@@ -134,12 +134,30 @@ export function save_cleanup_state(update: Partial<cleanup_state>): void {
     write_state(state);
 }
 
-// True when the full mapping cleanup is due: never run before, or the configured
-// interval has elapsed since the last completed run.
+// True when the heavy map cleanup should start now: we're inside the configured
+// low-traffic window (server-local day + hour range) and it hasn't already run since
+// this window opened. Gating on "ran since the window opened" rather than a fixed
+// elapsed interval pins it to the window with no week-to-week drift — each window it
+// runs exactly once, on the first sync tick that lands inside it. Once started it runs
+// to completion even past the window end; the window only gates starting.
 export function cleanup_due(now: Date): boolean {
+    const day = config.mapping_cleanup_day;
+    if (day >= 0 && now.getDay() !== day) return false;
+
+    const start = config.mapping_cleanup_start_hour;
+    const end = start + config.mapping_cleanup_window_hours;
+    const hour = now.getHours();
+    if (hour < start || hour >= end) return false;
+
+    // This window opened today at start_hour:00 (server-local). Skip if last_run is at
+    // or after that, which covers both later ticks in the same window and a same-window
+    // process restart.
+    const window_open = new Date(now);
+    window_open.setHours(start, 0, 0, 0);
     const last = get_sync_state().cleanup.last_run;
-    if (!last) return true;
-    return now.getTime() - last.getTime() >= config.mapping_cleanup_interval_ms;
+    if (last && last >= window_open) return false;
+
+    return true;
 }
 
 // Tracks per-item sync progress so the cursor only advances past items that
