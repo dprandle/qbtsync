@@ -33,9 +33,14 @@ export type time_record = {
 };
 
 // These are qbt users that never had an HRES - we keep them here in case we encounter any timesheets with them
-const NONSENSE_QBT_USER_IDS = new Set([
+const QBT_USER_IDS_NO_HRES = new Set([
     1200741, 1200896, 1833712, 1285222, 1285225, 1255926, 1853612, 1853634, 54199, 1266424, 1266726, 1257013, 1537602,
     1537620, 1241586, 1283131,
+]);
+
+const QBT_JOBCODE_IDS_NO_CONT = new Set([
+    4087983, 16065944, 16082052, 18253115, 1688109, 2552608, 2785597, 2785599, 2788228, 2820824, 13699048, 26495506,
+    27721302, 1687361, 1687363, 1688103,
 ]);
 
 function short_date_str(d: Date): string {
@@ -199,12 +204,17 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
 
     // Reverse-map the QBT user/jobcode to our ids.
     const user_map = batch.user_maps.get(ts.user_id);
-    if (!user_map && NONSENSE_QBT_USER_IDS.has(ts.user_id)) {
+    if (!user_map && QBT_USER_IDS_NO_HRES.has(ts.user_id)) {
         wlog(`[ts] Skipping with cursor advance - got known user id that doesn't match to hres -- usr: ${ts.user_id}`);
         return true;
     }
 
     const jobcode_map = batch.jc_maps.get(ts.jobcode_id);
+    if (!jobcode_map && QBT_JOBCODE_IDS_NO_CONT.has(ts.jobcode_id)) {
+        wlog(`[ts] Skipping with cursor advance - got known jobcode id that doesn't match to contract -- jc: ${ts.jobcode_id}`);
+        return true;
+    }
+    
     if (!user_map || !jobcode_map) {
         const jcstat = jobcode_map
             ? `ok (${jobcode_map.qbt_id} -> ${jobcode_map.our_id})`
