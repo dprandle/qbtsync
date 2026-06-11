@@ -19,12 +19,6 @@ import { qbt_object_map, qbt_object_type } from "./qbt_object_map";
 // per-call limits (QBT caps id-list requests at 100).
 const CLEANUP_CHUNK = 100;
 
-function chunk<T>(arr: T[], size: number): T[][] {
-    const out: T[][] = [];
-    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-    return out;
-}
-
 type type_handler = {
     // Of the given qbt ids, which still exist on QBT. Uses active:"both" / by-ids so
     // an *archived* or *old* object is reported present (not mistaken for deleted).
@@ -97,75 +91,112 @@ async function archive_each(
     return ok;
 }
 
-// Full scan of the qbt object map: bulk-load every mapping, then reconcile each type
-// in chunks. Per-batch failures (a probe error, a failed reap, a failed delete) are
-// logged and skipped so a localized problem can't abort the whole sweep.
+// Reconcile one chunk of same-type mappings: probe both sides, drop mappings whose
+// QBT object is gone, reap orphaned QBT objects whose our-side is gone (then drop
+// those mappings too). Per-chunk failures (a probe error, a failed reap, a failed
+// delete) are logged and the chunk skipped so a localized problem can't abort the
+// sweep. Returns how many mappings were removed and QBT objects reaped.
+async function process_cleanup_chunk(
+    type: qbt_object_type,
+    batch: qbt_object_map[],
+    qbt: qbt_client
+): Promise<{ removed: number; reaped: number }> {
+    const map_col = mongo.get_qbt_map_objects();
+    const handler = HANDLERS[type];
+
+    let qbt_existing: Set<number>;
+    let our_existing: Set<string>;
+    try {
+        [qbt_existing, our_existing] = await Promise.all([
+            handler.fetch_qbt_existing(qbt, batch.map((m) => m.qbt_id)),
+            handler.fetch_our_existing(batch.map((m) => m.our_id)),
+        ]);
+    } catch (err) {
+        elog(`[cleanup] ${type}: failed to probe a batch of ${batch.length} - skipping batch:`, err);
+        return { removed: 0, reaped: 0 };
+    }
+
+    const remove_ids: string[] = []; // mapping _ids to delete
+    const orphan_qbt_ids: number[] = []; // qbt ids whose our-side is gone (qbt still present)
+    const orphan_map_id = new Map<number, string>(); // qbt_id -> mapping _id
+
+    for (const m of batch) {
+        const qbt_present = qbt_existing.has(m.qbt_id);
+        const our_present = our_existing.has(m.our_id);
+        if (qbt_present && our_present) continue; // healthy
+        if (!qbt_present) {
+            remove_ids.push(m._id);
+            ilog(
+                `[cleanup] ${type}: dropping mapping ${m._id} - qbt ${m.qbt_id} missing, our ${m.our_id} ${our_present ? "present" : "missing"}`
+            );
+        } else {
+            orphan_qbt_ids.push(m.qbt_id);
+            orphan_map_id.set(m.qbt_id, m._id);
+        }
+    }
+
+    let reaped = 0;
+    if (orphan_qbt_ids.length > 0) {
+        const handled = await handler.reap_orphan_qbt(qbt, orphan_qbt_ids);
+        for (const qid of handled) {
+            const mid = orphan_map_id.get(qid);
+            if (mid) remove_ids.push(mid);
+        }
+        reaped = handled.length;
+    }
+
+    let removed = 0;
+    if (remove_ids.length > 0) {
+        try {
+            const res = await map_col.deleteMany({ _id: { $in: remove_ids } });
+            removed = res.deletedCount ?? 0;
+        } catch (err) {
+            elog(`[cleanup] ${type}: failed to delete ${remove_ids.length} mapping(s):`, err);
+        }
+    }
+    return { removed, reaped };
+}
+
+// Full scan of the qbt object map, reconciling each type in chunks. The map is
+// streamed rather than toArray()'d: it grows ~1:1 with timesheets (the largest
+// collection), so materializing it all at once would OOM the heap the same way the
+// outbound timesheet sync did. We buffer per type up to one chunk and reconcile each
+// chunk as it fills, so peak memory is a few chunks, not the whole collection.
+// noCursorTimeout keeps the cursor alive across the slow, rate-limited QBT probes and
+// reaps of a chunk (a chunk can exceed the default 10-minute idle timeout); the
+// for-await closes it on completion or throw. Deletes only ever target rows already
+// read from the cursor, so mutating the collection mid-scan can't skip or repeat an
+// unread row.
 export async function run_qbt_mapping_cleanup(qbt: qbt_client): Promise<void> {
     const map_col = mongo.get_qbt_map_objects();
     ilog("[cleanup] Starting qbt object map cleanup scan");
 
-    const all = await map_col.find({}).toArray();
-    const by_type = new Map<qbt_object_type, qbt_object_map[]>();
-    for (const m of all) {
-        const list = by_type.get(m.type);
-        if (list) list.push(m);
-        else by_type.set(m.type, [m]);
-    }
-
+    const db_cursor = map_col.find({}, { noCursorTimeout: true });
+    const buffers = new Map<qbt_object_type, qbt_object_map[]>();
     let removed = 0;
     let reaped = 0;
-    for (const [type, maps] of by_type) {
-        const handler = HANDLERS[type];
-        for (const batch of chunk(maps, CLEANUP_CHUNK)) {
-            let qbt_existing: Set<number>;
-            let our_existing: Set<string>;
-            try {
-                [qbt_existing, our_existing] = await Promise.all([
-                    handler.fetch_qbt_existing(qbt, batch.map((m) => m.qbt_id)),
-                    handler.fetch_our_existing(batch.map((m) => m.our_id)),
-                ]);
-            } catch (err) {
-                elog(`[cleanup] ${type}: failed to probe a batch of ${batch.length} - skipping batch:`, err);
-                continue;
-            }
 
-            const remove_ids: string[] = []; // mapping _ids to delete
-            const orphan_qbt_ids: number[] = []; // qbt ids whose our-side is gone (qbt still present)
-            const orphan_map_id = new Map<number, string>(); // qbt_id -> mapping _id
-
-            for (const m of batch) {
-                const qbt_present = qbt_existing.has(m.qbt_id);
-                const our_present = our_existing.has(m.our_id);
-                if (qbt_present && our_present) continue; // healthy
-                if (!qbt_present) {
-                    remove_ids.push(m._id);
-                    ilog(
-                        `[cleanup] ${type}: dropping mapping ${m._id} - qbt ${m.qbt_id} missing, our ${m.our_id} ${our_present ? "present" : "missing"}`
-                    );
-                } else {
-                    orphan_qbt_ids.push(m.qbt_id);
-                    orphan_map_id.set(m.qbt_id, m._id);
-                }
-            }
-
-            if (orphan_qbt_ids.length > 0) {
-                const handled = await handler.reap_orphan_qbt(qbt, orphan_qbt_ids);
-                for (const qid of handled) {
-                    const mid = orphan_map_id.get(qid);
-                    if (mid) remove_ids.push(mid);
-                }
-                reaped += handled.length;
-            }
-
-            if (remove_ids.length > 0) {
-                try {
-                    const res = await map_col.deleteMany({ _id: { $in: remove_ids } });
-                    removed += res.deletedCount ?? 0;
-                } catch (err) {
-                    elog(`[cleanup] ${type}: failed to delete ${remove_ids.length} mapping(s):`, err);
-                }
-            }
+    for await (const m of db_cursor) {
+        let buf = buffers.get(m.type);
+        if (!buf) {
+            buf = [];
+            buffers.set(m.type, buf);
         }
+        buf.push(m);
+        if (buf.length >= CLEANUP_CHUNK) {
+            const res = await process_cleanup_chunk(m.type, buf, qbt);
+            removed += res.removed;
+            reaped += res.reaped;
+            buf.length = 0;
+        }
+    }
+
+    // Flush the partial per-type buffers left under one chunk.
+    for (const [type, buf] of buffers) {
+        if (buf.length === 0) continue;
+        const res = await process_cleanup_chunk(type, buf, qbt);
+        removed += res.removed;
+        reaped += res.reaped;
     }
 
     ilog(`[cleanup] Finished - removed ${removed} mapping(s), reaped ${reaped} orphaned qbt object(s)`);

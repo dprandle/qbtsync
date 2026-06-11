@@ -617,16 +617,25 @@ export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise
     let batch: time_record[] = [];
     let processed = 0;
     let batch_num = 0;
+    let last_ts = 0;
 
     for await (const trec of db_cursor) {
-        batch.push(trec);
-        if (batch.length >= config.outbound_ts_batch_size) {
+        // Only cut a batch at a timestamp boundary, never mid-tie. The per-batch save
+        // commits the cursor up to the batch's max last_update.on, and resume uses a
+        // strict $gt; if equal-timestamp docs were split across a saved boundary, a
+        // crash between the two halves would drop the remainder forever. A single
+        // timestamp with more than batch_size docs therefore yields one oversized
+        // batch — bounded by the tie size, still far below the whole-collection load.
+        const at = trec.last_update.on.getTime();
+        if (batch.length >= config.outbound_ts_batch_size && at !== last_ts) {
             batch_num++;
             ilog(`[ts] Processing outbound batch ${batch_num} (${batch.length} trecs)`);
             await process_outbound_batch(batch, batch_num, processed, since, progress, qbt);
             processed += batch.length;
             batch = [];
         }
+        batch.push(trec);
+        last_ts = at;
     }
     if (batch.length > 0) {
         batch_num++;
