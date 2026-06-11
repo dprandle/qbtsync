@@ -99,10 +99,16 @@ async function archive_each(
 async function process_cleanup_chunk(
     type: qbt_object_type,
     batch: qbt_object_map[],
-    qbt: qbt_client
+    qbt: qbt_client,
+    seq: number,
+    scanned: number
 ): Promise<{ removed: number; reaped: number }> {
     const map_col = mongo.get_qbt_map_objects();
     const handler = HANDLERS[type];
+
+    // Log before the (slow, possibly rate-limited) probe so the scan shows forward
+    // progress instead of looking hung while a chunk of all-healthy rows runs silently.
+    ilog(`[cleanup] ${type}: probing chunk #${seq} (${batch.length} mappings, ${scanned} scanned so far)`);
 
     let qbt_existing: Set<number>;
     let our_existing: Set<string>;
@@ -154,6 +160,9 @@ async function process_cleanup_chunk(
             elog(`[cleanup] ${type}: failed to delete ${remove_ids.length} mapping(s):`, err);
         }
     }
+    if (removed > 0 || reaped > 0) {
+        ilog(`[cleanup] ${type}: chunk #${seq} done - dropped ${removed} mapping(s), reaped ${reaped} object(s)`);
+    }
     return { removed, reaped };
 }
 
@@ -175,6 +184,8 @@ export async function run_qbt_mapping_cleanup(qbt: qbt_client): Promise<void> {
     const buffers = new Map<qbt_object_type, qbt_object_map[]>();
     let removed = 0;
     let reaped = 0;
+    let seq = 0; // chunk counter, for progress logging
+    let scanned = 0; // mappings streamed from the cursor so far
 
     for await (const m of db_cursor) {
         let buf = buffers.get(m.type);
@@ -183,8 +194,9 @@ export async function run_qbt_mapping_cleanup(qbt: qbt_client): Promise<void> {
             buffers.set(m.type, buf);
         }
         buf.push(m);
+        scanned++;
         if (buf.length >= CLEANUP_CHUNK) {
-            const res = await process_cleanup_chunk(m.type, buf, qbt);
+            const res = await process_cleanup_chunk(m.type, buf, qbt, ++seq, scanned);
             removed += res.removed;
             reaped += res.reaped;
             buf.length = 0;
@@ -194,10 +206,12 @@ export async function run_qbt_mapping_cleanup(qbt: qbt_client): Promise<void> {
     // Flush the partial per-type buffers left under one chunk.
     for (const [type, buf] of buffers) {
         if (buf.length === 0) continue;
-        const res = await process_cleanup_chunk(type, buf, qbt);
+        const res = await process_cleanup_chunk(type, buf, qbt, ++seq, scanned);
         removed += res.removed;
         reaped += res.reaped;
     }
 
-    ilog(`[cleanup] Finished - removed ${removed} mapping(s), reaped ${reaped} orphaned qbt object(s)`);
+    ilog(
+        `[cleanup] Finished - scanned ${scanned} mapping(s) in ${seq} chunk(s), removed ${removed}, reaped ${reaped} orphaned qbt object(s)`
+    );
 }
