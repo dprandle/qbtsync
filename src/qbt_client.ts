@@ -26,6 +26,14 @@ import {
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
 
+// QBT rejects the timestamp that Date.toISOString() produces: it does not accept
+// the fractional-seconds component (".000") nor the "Z" zone shorthand. It wants
+// ISO-8601 with whole seconds and a numeric UTC offset — the same shape it emits
+// for last_modified. e.g. 2024-01-01T00:00:00.000Z -> 2024-01-01T00:00:00+00:00
+function qbt_iso(d: Date): string {
+    return d.toISOString().replace(/\.\d{3}Z$/, "+00:00");
+}
+
 async function qbt_get(path: string, params: Record<string, string>): Promise<unknown> {
     const url = new URL(`${BASE_URL}${path}`);
     for (const [key, val] of Object.entries(params)) {
@@ -113,7 +121,7 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
             on_the_clock: "both"
         };
-        if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (opts.modified_since) params["modified_since"] = qbt_iso(opts.modified_since);
         if (!opts.ids?.length) params["start_date"] = config.timesheet_start_date;
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/timesheets", params)) as qbt_timesheets_response;
@@ -150,7 +158,7 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
             active: opts.active,
         };
-        if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (opts.modified_since) params["modified_since"] = qbt_iso(opts.modified_since);
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/users", params)) as qbt_users_response;
         return { items: Object.values(data.results.users), more: data.more };
@@ -184,7 +192,7 @@ export class qbt_api_client implements qbt_client {
             page: String(opts.page ?? 1),
             active: opts.active,
         };
-        if (opts.modified_since) params["modified_since"] = opts.modified_since.toISOString();
+        if (opts.modified_since) params["modified_since"] = qbt_iso(opts.modified_since);
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/jobcodes", params)) as qbt_jobcodes_response;
         return { items: Object.values(data.results.jobcodes), more: data.more };
