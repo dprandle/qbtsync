@@ -50,7 +50,9 @@ export type fetch_jobcodes_result = fetch_items_result<qbt_jobcode>;
 
 export type fetch_assignments_opts = {
     page?: number;
-    jobcode_ids?: number[];
+    // QBT's jobcode_assignments endpoint only filters by a single jobcode_id (not
+    // a list) — and by user_ids (a list). Keep these shapes matched to the API.
+    jobcode_id?: number;
     user_ids?: number[];
     ids?: number[];
 };

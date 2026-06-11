@@ -210,7 +210,7 @@ export class qbt_api_client implements qbt_client {
             limit: "100",
             page: String(opts.page ?? 1),
         };
-        if (opts.jobcode_ids?.length) params["jobcode_ids"] = opts.jobcode_ids.join(",");
+        if (opts.jobcode_id != null) params["jobcode_id"] = String(opts.jobcode_id);
         if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");
         const data = (await qbt_get("/jobcode_assignments", params)) as qbt_jobcode_assignments_response;

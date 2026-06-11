@@ -37,7 +37,7 @@ export async function reconcile_jc_assignments_by_jobcode(
     const actual = new Map<number, number>(); // user_id → assignment id
     let page = 1;
     while (true) {
-        const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ jobcode_ids: [jobcode_id], page });
+        const { items: assignments, more } = await qbt.fetch_jobcode_assignments({ jobcode_id, page });
         for (const a of assignments) {
             if (a.active) actual.set(a.user_id, a.id);
         }

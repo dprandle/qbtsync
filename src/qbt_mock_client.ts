@@ -217,7 +217,7 @@ export class qbt_mock_client implements qbt_client {
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
-        if (opts.jobcode_ids?.length) filter["jobcode_id"] = { $in: opts.jobcode_ids };
+        if (opts.jobcode_id != null) filter["jobcode_id"] = opts.jobcode_id;
         if (opts.user_ids?.length) filter["user_id"] = { $in: opts.user_ids };
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
