@@ -195,12 +195,12 @@ export class qbt_api_client implements qbt_client {
     }): Promise<qbt_user> {
         const body = { data: [{ ...d, employee_role: "employee" }] };
         const data = (await qbt_post("/users", body)) as qbt_users_response;
-        return Object.values(data.results.users)[0];
+        return expect_ok(Object.values(data.results.users)[0], "user create", 0);
     }
 
     async update_user(id: number, d: Partial<qbt_user>): Promise<qbt_user> {
         const data = (await qbt_put("/users", { data: [{ ...d, id }] })) as qbt_users_response;
-        return Object.values(data.results.users)[0];
+        return expect_ok(Object.values(data.results.users)[0], "user update", id);
     }
 
     async fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result> {
@@ -222,12 +222,12 @@ export class qbt_api_client implements qbt_client {
 
     async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
         const data = (await qbt_post("/jobcodes", { data: [d] })) as qbt_jobcodes_response;
-        return Object.values(data.results.jobcodes)[0];
+        return expect_ok(Object.values(data.results.jobcodes)[0], "jobcode create", 0);
     }
 
     async update_jobcode(id: number, d: Partial<qbt_jobcode>): Promise<qbt_jobcode> {
         const data = (await qbt_put("/jobcodes", { data: [{ ...d, id }] })) as qbt_jobcodes_response;
-        return Object.values(data.results.jobcodes)[0];
+        return expect_ok(Object.values(data.results.jobcodes)[0], "jobcode update", id);
     }
 
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
@@ -251,7 +251,7 @@ export class qbt_api_client implements qbt_client {
         const data = (await qbt_post("/jobcode_assignments", {
             data: [{ user_id, jobcode_id }],
         })) as qbt_jobcode_assignments_response;
-        return Object.values(data.results.jobcode_assignments)[0];
+        return expect_ok(Object.values(data.results.jobcode_assignments)[0], "jobcode_assignment create", 0);
     }
 
     async delete_jobcode_assignment(id: number): Promise<void> {

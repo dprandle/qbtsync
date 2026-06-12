@@ -83,7 +83,7 @@ export type qbt_user = {
 
 export type qbt_users_response = {
     results: {
-        users: Record<string, qbt_user>;
+        users: Record<string, qbt_user & qbt_item_status>;
     };
     more: boolean;
 };
@@ -133,7 +133,7 @@ export type qbt_jobcode = {
 
 export type qbt_jobcodes_response = {
     results: {
-        jobcodes: Record<string, qbt_jobcode>;
+        jobcodes: Record<string, qbt_jobcode & qbt_item_status>;
     };
     more: boolean;
 };
@@ -148,7 +148,7 @@ export type qbt_jobcode_assignment = {
 
 export type qbt_jobcode_assignments_response = {
     results: {
-        jobcode_assignments: Record<string, qbt_jobcode_assignment>;
+        jobcode_assignments: Record<string, qbt_jobcode_assignment & qbt_item_status>;
     };
     more: boolean;
 };
