@@ -47,9 +47,11 @@ function short_date_str(d: Date): string {
     return d.toISOString().slice(0, 10);
 }
 
-function short_time_str(d: Date | string): string {
+function short_time_str(d: Date | string | null | undefined): string {
     const dt = typeof d === "string" ? new Date(d) : d;
-    if (!dt.getTime() || dates_equal(dt, INVALID_DATETIME)) return "on-the-clock";
+    if (!dt || Number.isNaN(dt.getTime()) || dates_equal(dt, INVALID_DATETIME)) {
+        return "on-the-clock";
+    }
     return dt
         .toLocaleTimeString("en-US", {
             hour: "numeric",
