@@ -11,6 +11,7 @@ import {
     fetch_assignments_opts,
     fetch_assignments_result,
     timesheet_write_data,
+    type qbt_item_status,
     type qbt_timesheet,
     type qbt_timesheets_response,
     type qbt_user,
@@ -94,6 +95,22 @@ function expect_one<T>(items: T[], label: string, id: number): T {
     return items[0];
 }
 
+// Batch write endpoints return HTTP 200 even when an individual item fails, with the
+// failure carried in the per-item _status_code/_status_message. Without this check the
+// caller would treat the error object as a real result (all real fields undefined) and
+// record a phantom success. Throw instead so the per-item catch floors the cursor and
+// retries.
+function expect_ok<T extends qbt_item_status>(item: T | undefined, label: string, id: number): T {
+    if (!item) {
+        throw new Error(`QBT ${label} ${id}: no result returned`);
+    }
+    if (item._status_code !== undefined && item._status_code >= 300) {
+        const extra = item._status_extra ? ` - ${item._status_extra}` : "";
+        throw new Error(`QBT ${label} ${id} failed (${item._status_code}): ${item._status_message ?? "unknown"}${extra}`);
+    }
+    return item;
+}
+
 async function qbt_delete(path: string, params: Record<string, string>): Promise<void> {
     const url = new URL(`${BASE_URL}${path}`);
 
@@ -135,12 +152,12 @@ export class qbt_api_client implements qbt_client {
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
         const data = (await qbt_post("/timesheets", { data: [d] })) as qbt_timesheets_response;
-        return Object.values(data.results.timesheets)[0];
+        return expect_ok(Object.values(data.results.timesheets)[0], "timesheet create", 0);
     }
 
     async update_timesheet(id: number, d: Partial<timesheet_write_data>): Promise<qbt_timesheet> {
         const data = (await qbt_put("/timesheets", { data: [{ id, ...d }] })) as qbt_timesheets_response;
-        return Object.values(data.results.timesheets)[0];
+        return expect_ok(Object.values(data.results.timesheets)[0], "timesheet update", id);
     }
 
     async delete_timesheets(ids: number[]): Promise<void> {

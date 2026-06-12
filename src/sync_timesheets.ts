@@ -538,7 +538,9 @@ async function process_time_record_update(
             await do_create();
         } else {
             const updates: Partial<qbt_timesheet> = {};
-            if (!dates_equal(trec.start, ts.start)) updates.start = trec.start.toISOString();
+            // QBT rejects edits to the start of an on-the-clock (running) timesheet, so
+            // only push a start change once the timesheet has been clocked out.
+            if (!on_the_clock && !dates_equal(trec.start, ts.start)) updates.start = trec.start.toISOString();
             if (!dates_equal(trec.end, ts.end)) updates.end = !on_the_clock ? trec.end.toISOString() : "";
             if (!dates_equal(trec.date, ts.date)) updates.date = short_date_str(trec.date);
             if (trec.notes !== ts.notes) updates.notes = trec.notes;

@@ -103,9 +103,18 @@ export type qbt_timesheet = {
 
 export type timesheet_write_data = Omit<qbt_timesheet, "id" | "last_modified">;
 
+// Batch write endpoints (PUT/POST) return HTTP 200 even when an individual item
+// fails; the per-item outcome carries these status fields. Successful items report
+// _status_code 200/201; failures omit the real object fields and only set these.
+export type qbt_item_status = {
+    _status_code?: number;
+    _status_message?: string;
+    _status_extra?: string;
+};
+
 export type qbt_timesheets_response = {
     results: {
-        timesheets: Record<string, qbt_timesheet>;
+        timesheets: Record<string, qbt_timesheet & qbt_item_status>;
     };
     more: boolean;
     supplemental_data?: {
