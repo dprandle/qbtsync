@@ -11,5 +11,5 @@ fi
 ssh "$REMOTE" <<'EOF'
 set -euo pipefail
 SERVICE="qbtsync"
-journalctl -u "$SERVICE" -f
+journalctl -u "$SERVICE" -e -f
 EOF
