@@ -35,6 +35,17 @@ function qbt_iso(d: Date): string {
     return d.toISOString().replace(/\.\d{3}Z$/, "+00:00");
 }
 
+// Timesheet start/end reach us as ISO strings serialized with Date.toISOString()
+// (".000Z"), which QBT rejects on writes with a 417 the same way it rejects the
+// modified_since query above. Re-normalize them to the whole-second numeric-offset
+// shape. An empty string (on-the-clock end) is a valid value and passes through.
+function normalize_ts_times<T extends { start?: string; end?: string }>(d: T): T {
+    const out = { ...d };
+    if (out.start) out.start = qbt_iso(new Date(out.start));
+    if (out.end) out.end = qbt_iso(new Date(out.end));
+    return out;
+}
+
 async function qbt_get(path: string, params: Record<string, string>): Promise<unknown> {
     const url = new URL(`${BASE_URL}${path}`);
     for (const [key, val] of Object.entries(params)) {
@@ -151,12 +162,14 @@ export class qbt_api_client implements qbt_client {
     }
 
     async create_timesheet(d: timesheet_write_data): Promise<qbt_timesheet> {
-        const data = (await qbt_post("/timesheets", { data: [d] })) as qbt_timesheets_response;
+        const data = (await qbt_post("/timesheets", { data: [normalize_ts_times(d)] })) as qbt_timesheets_response;
         return expect_ok(Object.values(data.results.timesheets)[0], "timesheet create", 0);
     }
 
     async update_timesheet(id: number, d: Partial<timesheet_write_data>): Promise<qbt_timesheet> {
-        const data = (await qbt_put("/timesheets", { data: [{ id, ...d }] })) as qbt_timesheets_response;
+        const data = (await qbt_put("/timesheets", {
+            data: [{ id, ...normalize_ts_times(d) }],
+        })) as qbt_timesheets_response;
         return expect_ok(Object.values(data.results.timesheets)[0], "timesheet update", id);
     }
 
