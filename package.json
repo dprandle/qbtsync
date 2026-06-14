@@ -10,6 +10,7 @@
         "seed_mock_db": "npm run build && node dist/seed_mock_db.js",
         "bootstrap": "npm run build && node dist/bootstrap.js",
         "restore_jobcode_names": "npm run build && node dist/restore_jobcode_names.js",
+        "get_qbt_item": "npm run build && node dist/get_qbt_item.js",
         "start": "npm run build && node dist/index.js",
         "reset": "npm run build && node dist/index.js --reset",
         "wipe": "npm run build && node dist/index.js --reset",

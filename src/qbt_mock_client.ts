@@ -15,6 +15,7 @@ import {
     type qbt_jobcode_assignment,
     type create_invitation_opts,
     type qbt_invite_result,
+    type qbt_query_filter,
 } from "./qbt_client_interface";
 import mongo from "./db";
 import { config } from "./config";
@@ -42,6 +43,27 @@ function expect_one<T>(items: T[], label: string, id: number): T {
         throw new Error(`Expected 1 ${label} for id ${id}, got ${items.length}`);
     }
     return items[0];
+}
+
+// Map a free-form query filter onto a Mongo filter. The wire `id`/`ids` keys address
+// what is stored as `_id`, so translate those; every other key is treated as a direct
+// field match (mirrors how the live client passes the same object through as params).
+function to_mock_filter(filter: qbt_query_filter): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const [key, val] of Object.entries(filter)) {
+        if (val === undefined || val === null) continue;
+        if (key === "ids") {
+            const ids = Array.isArray(val)
+                ? val.map(Number)
+                : String(val).split(",").map((s) => Number(s.trim()));
+            out["_id"] = { $in: ids };
+        } else if (key === "id") {
+            out["_id"] = Number(val);
+        } else {
+            out[key] = val;
+        }
+    }
+    return out;
 }
 
 function next_mock_id(): number {
@@ -258,5 +280,25 @@ export class qbt_mock_client implements qbt_client {
         // Dev mode: no real invite is sent — just log what would have gone out.
         ilog("[mock] create_invitation", opts);
         return { _status_code: 201, _status_message: "Created" };
+    }
+
+    async query_timesheets(filter: qbt_query_filter): Promise<qbt_timesheet[]> {
+        const docs = await mongo.get_mock_timesheets().find(to_mock_filter(filter)).limit(PAGE_SIZE).toArray();
+        return docs.map((d) => from_mock_doc<qbt_timesheet>(d));
+    }
+
+    async query_users(filter: qbt_query_filter): Promise<qbt_user[]> {
+        const docs = await mongo.get_mock_users().find(to_mock_filter(filter)).limit(PAGE_SIZE).toArray();
+        return docs.map((d) => from_mock_doc<qbt_user>(d));
+    }
+
+    async query_jobcodes(filter: qbt_query_filter): Promise<qbt_jobcode[]> {
+        const docs = await mongo.get_mock_jobcodes().find(to_mock_filter(filter)).limit(PAGE_SIZE).toArray();
+        return docs.map((d) => from_mock_doc<qbt_jobcode>(d));
+    }
+
+    async query_jobcode_assignments(filter: qbt_query_filter): Promise<qbt_jobcode_assignment[]> {
+        const docs = await mongo.get_mock_assignments().find(to_mock_filter(filter)).limit(PAGE_SIZE).toArray();
+        return docs.map((d) => from_mock_doc<qbt_jobcode_assignment>(d));
     }
 }

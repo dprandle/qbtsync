@@ -23,6 +23,7 @@ import {
     type create_invitation_opts,
     type qbt_invite_result,
     type qbt_invitations_response,
+    type qbt_query_filter,
 } from "./qbt_client_interface";
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
@@ -44,6 +45,18 @@ function normalize_ts_times<T extends { start?: string; end?: string }>(d: T): T
     if (out.start) out.start = qbt_iso(new Date(out.start));
     if (out.end) out.end = qbt_iso(new Date(out.end));
     return out;
+}
+
+// Turn a free-form filter object into the flat string-valued param map qbt_get wants.
+// Arrays become the comma-separated form QBT uses for list params (e.g. ids, user_ids);
+// null/undefined entries are dropped so an absent filter key is simply omitted.
+function filter_to_params(filter: qbt_query_filter): Record<string, string> {
+    const params: Record<string, string> = {};
+    for (const [key, val] of Object.entries(filter)) {
+        if (val === undefined || val === null) continue;
+        params[key] = Array.isArray(val) ? val.map(String).join(",") : String(val);
+    }
+    return params;
 }
 
 async function qbt_get(path: string, params: Record<string, string>): Promise<unknown> {
@@ -274,5 +287,25 @@ export class qbt_api_client implements qbt_client {
     async create_invitation(opts: create_invitation_opts): Promise<qbt_invite_result> {
         const data = (await qbt_post("/invitations", { data: [opts] })) as qbt_invitations_response;
         return Object.values(data.results.invites)[0];
+    }
+
+    async query_timesheets(filter: qbt_query_filter): Promise<qbt_timesheet[]> {
+        const data = (await qbt_get("/timesheets", filter_to_params(filter))) as qbt_timesheets_response;
+        return Object.values(data.results.timesheets);
+    }
+
+    async query_users(filter: qbt_query_filter): Promise<qbt_user[]> {
+        const data = (await qbt_get("/users", filter_to_params(filter))) as qbt_users_response;
+        return Object.values(data.results.users);
+    }
+
+    async query_jobcodes(filter: qbt_query_filter): Promise<qbt_jobcode[]> {
+        const data = (await qbt_get("/jobcodes", filter_to_params(filter))) as qbt_jobcodes_response;
+        return Object.values(data.results.jobcodes);
+    }
+
+    async query_jobcode_assignments(filter: qbt_query_filter): Promise<qbt_jobcode_assignment[]> {
+        const data = (await qbt_get("/jobcode_assignments", filter_to_params(filter))) as qbt_jobcode_assignments_response;
+        return Object.values(data.results.jobcode_assignments);
     }
 }

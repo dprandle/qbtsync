@@ -22,6 +22,11 @@ export async function fetch_all_by_ids<T>(
 
 export type active_param = "yes" | "no" | "both";
 
+// Free-form object filter used by the introspection query_* methods. Each entry is
+// a QBT filter: for the live client it becomes a query param (arrays are joined into
+// the comma-separated form QBT expects); for the mock it's applied as a Mongo filter.
+export type qbt_query_filter = Record<string, unknown>;
+
 export type fetch_timesheets_opts = {
     modified_since?: Date;
     page?: number;
@@ -209,4 +214,13 @@ export interface qbt_client {
 
     // Invitations
     create_invitation(opts: create_invitation_opts): Promise<qbt_invite_result>;
+
+    // Object-filter queries (dev/introspection). The filter is a free-form object,
+    // kind of like a Mongo filter: the live client turns it into QBT query params,
+    // the mock applies it as a Mongo filter. Each returns the matched items for the
+    // single page the underlying request yields.
+    query_timesheets(filter: qbt_query_filter): Promise<qbt_timesheet[]>;
+    query_users(filter: qbt_query_filter): Promise<qbt_user[]>;
+    query_jobcodes(filter: qbt_query_filter): Promise<qbt_jobcode[]>;
+    query_jobcode_assignments(filter: qbt_query_filter): Promise<qbt_jobcode_assignment[]>;
 }
