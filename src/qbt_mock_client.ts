@@ -107,7 +107,6 @@ export class qbt_mock_client implements qbt_client {
             date: d.date,
             notes: d.notes,
             location: d.location,
-            on_the_clock: d.on_the_clock,
             last_modified: now_iso(),
         };
         await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts));

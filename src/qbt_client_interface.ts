@@ -102,7 +102,6 @@ export type qbt_timesheet = {
     end: string; // ISO 8601
     date: string; // YYYY-MM-DD
     location: string;
-    on_the_clock: boolean;
     last_modified: string; // ISO 8601    
 };
 
