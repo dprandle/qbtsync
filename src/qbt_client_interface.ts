@@ -97,6 +97,7 @@ export type qbt_timesheet = {
     id: number;
     user_id: number;
     jobcode_id: number;
+    type: "regular" | "manual";
     notes: string;
     start: string; // ISO 8601
     end: string; // ISO 8601

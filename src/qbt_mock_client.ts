@@ -102,6 +102,7 @@ export class qbt_mock_client implements qbt_client {
             id: next_mock_id(),
             user_id: d.user_id,
             jobcode_id: d.jobcode_id,
+            type: "regular",
             start: d.start,
             end: d.end,
             date: d.date,

@@ -501,6 +501,7 @@ async function process_time_record_update(
         const timesheet = await qbt.create_timesheet({
             user_id: user_map.qbt_id,
             jobcode_id: jobcode_map.qbt_id,
+            type: "regular",
             start: trec.start.toISOString(),
             end: on_the_clock ? "" : trec.end.toISOString(),
             date: trec.date.toISOString().slice(0, 10),
