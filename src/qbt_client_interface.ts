@@ -203,7 +203,7 @@ export interface qbt_client {
     // Jobcodes
     fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result>;
     fetch_jobcode(id: number): Promise<qbt_jobcode>;
-    create_jobcode(data: { name: string; jobcode_type: string }): Promise<qbt_jobcode>;
+    create_jobcode(data: { name: string; }): Promise<qbt_jobcode>;
     update_jobcode(id: number, data: Partial<qbt_jobcode>): Promise<qbt_jobcode>;
 
     // Jobcode Assignments

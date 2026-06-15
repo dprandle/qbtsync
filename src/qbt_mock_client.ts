@@ -213,7 +213,7 @@ export class qbt_mock_client implements qbt_client {
         return expect_one(items, "jobcode", id);
     }
 
-    async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
+    async create_jobcode(d: { name: string }): Promise<qbt_jobcode> {
         const jc: qbt_jobcode = {
             id: next_mock_id(),
             name: d.name,
