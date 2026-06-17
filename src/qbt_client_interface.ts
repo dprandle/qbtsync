@@ -84,6 +84,10 @@ export type qbt_user = {
     active: boolean;
     employee_role: string;
     last_modified: string; // ISO 8601
+    permissions: {
+        mobile: boolean;
+        time_tracking: boolean;
+    }
 };
 
 export type qbt_users_response = {
