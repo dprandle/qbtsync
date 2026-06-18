@@ -179,7 +179,6 @@ export class qbt_mock_client implements qbt_client {
             last_name: d.last_name,
             mobile_number: d.mobile_number,
             active: true,
-            employee_role: "employee",
             last_modified: now_iso(),
             permissions: {
                 mobile: true,

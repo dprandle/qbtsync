@@ -82,7 +82,6 @@ export type qbt_user = {
     last_name: string;
     mobile_number: string;
     active: boolean;
-    employee_role: string;
     last_modified: string; // ISO 8601
     permissions: {
         mobile: boolean;
