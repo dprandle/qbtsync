@@ -10,6 +10,8 @@ import {
     fetch_jobcodes_result,
     fetch_assignments_opts,
     fetch_assignments_result,
+    fetch_deleted_timesheets_opts,
+    fetch_deleted_timesheets_result,
     timesheet_write_data,
     type qbt_item_status,
     type qbt_timesheet,
@@ -24,6 +26,7 @@ import {
     type qbt_invite_result,
     type qbt_invitations_response,
     type qbt_query_filter,
+    type qbt_timesheets_deleted_response,
 } from "./qbt_client_interface";
 
 const BASE_URL = "https://rest.tsheets.com/api/v1";
@@ -195,6 +198,16 @@ export class qbt_api_client implements qbt_client {
         await this.delete_timesheets([id]);
     }
 
+    async fetch_deleted_timesheets(opts: fetch_deleted_timesheets_opts): Promise<fetch_deleted_timesheets_result> {
+        const params: Record<string, string> = {
+            limit: "100",
+            page: String(opts.page ?? 1),
+            modified_since: qbt_iso(opts.modified_since),
+        };
+        const data = (await qbt_get("/timesheets_deleted", params)) as qbt_timesheets_deleted_response;
+        return { ids: Object.values(data.results.timesheets_deleted).map((t) => t.id), more: data.more };
+    }
+
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
         const params: Record<string, string> = {
             limit: "100",
@@ -261,6 +274,7 @@ export class qbt_api_client implements qbt_client {
             limit: "100",
             page: String(opts.page ?? 1),
         };
+        if (opts.modified_since) params["modified_since"] = qbt_iso(opts.modified_since);
         if (opts.jobcode_id != null) params["jobcode_id"] = String(opts.jobcode_id);
         if (opts.user_ids?.length) params["user_ids"] = opts.user_ids.join(",");
         if (opts.ids?.length) params["ids"] = opts.ids.join(",");

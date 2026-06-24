@@ -8,6 +8,8 @@ import {
     fetch_jobcodes_result,
     fetch_assignments_opts,
     fetch_assignments_result,
+    fetch_deleted_timesheets_opts,
+    fetch_deleted_timesheets_result,
     timesheet_write_data,
     type qbt_timesheet,
     type qbt_user,
@@ -136,6 +138,19 @@ export class qbt_mock_client implements qbt_client {
         await this.delete_timesheets([id]);
     }
 
+    async fetch_deleted_timesheets(opts: fetch_deleted_timesheets_opts): Promise<fetch_deleted_timesheets_result> {
+        const page = opts.page ?? 1;
+        const filter = { last_modified: { $gt: opts.modified_since.toISOString() } };
+        const docs = await mongo
+            .get_mock_deleted_timesheets()
+            .find(filter)
+            .skip((page - 1) * PAGE_SIZE)
+            .limit(PAGE_SIZE + 1)
+            .toArray();
+        const more = docs.length > PAGE_SIZE;
+        return { ids: docs.slice(0, PAGE_SIZE).map((d) => d._id), more };
+    }
+
     async fetch_users(opts: fetch_users_opts): Promise<fetch_users_result> {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
@@ -239,6 +254,7 @@ export class qbt_mock_client implements qbt_client {
     async fetch_jobcode_assignments(opts: fetch_assignments_opts): Promise<fetch_assignments_result> {
         const page = opts.page ?? 1;
         const filter: Record<string, unknown> = {};
+        if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         if (opts.jobcode_id != null) filter["jobcode_id"] = opts.jobcode_id;
         if (opts.user_ids?.length) filter["user_id"] = { $in: opts.user_ids };
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };

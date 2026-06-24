@@ -54,6 +54,7 @@ export type fetch_jobcodes_opts = {
 export type fetch_jobcodes_result = fetch_items_result<qbt_jobcode>;
 
 export type fetch_assignments_opts = {
+    modified_since?: Date;
     page?: number;
     // QBT's jobcode_assignments endpoint only filters by a single jobcode_id (not
     // a list) — and by user_ids (a list). Keep these shapes matched to the API.
@@ -63,6 +64,19 @@ export type fetch_assignments_opts = {
 };
 
 export type fetch_assignments_result = fetch_items_result<qbt_jobcode_assignment>;
+
+// timesheets_deleted is a read-only feed of removed timesheets. modified_since is
+// required by QBT (deletions are only addressable by when they happened), and we only
+// ever need the ids — enough to drop the matching rows from the mock store.
+export type fetch_deleted_timesheets_opts = {
+    modified_since: Date;
+    page?: number;
+};
+
+export type fetch_deleted_timesheets_result = {
+    ids: number[];
+    more: boolean;
+};
 
 export type qbt_contact_method = "sms" | "email";
 
@@ -128,6 +142,14 @@ export type qbt_timesheets_response = {
     };
 };
 
+// /timesheets_deleted returns the removed timesheets keyed by id; we only read the id.
+export type qbt_timesheets_deleted_response = {
+    results: {
+        timesheets_deleted: Record<string, { id: number }>;
+    };
+    more: boolean;
+};
+
 export type qbt_jobcode = {
     id: number;
     active: boolean;
@@ -187,6 +209,8 @@ export interface qbt_client {
     // shape and delete_timesheet is the single-id convenience (mirrors fetch_*).
     delete_timesheets(ids: number[]): Promise<void>;
     delete_timesheet(id: number): Promise<void>;
+    // Read-only feed of removed timesheets; returns the deleted ids modified_since.
+    fetch_deleted_timesheets(opts: fetch_deleted_timesheets_opts): Promise<fetch_deleted_timesheets_result>;
 
     // Users
     fetch_users(opts: fetch_users_opts): Promise<fetch_users_result>;
