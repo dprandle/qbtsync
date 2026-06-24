@@ -87,6 +87,9 @@ async function process_hres_update(hres: hresource_doc, qbt: qbt_client, cache: 
             if (usi.mobile_number !== norm_hr_phone) updates.mobile_number = norm_hr_phone;
             if (usi.first_name !== hres.first_name) updates.first_name = hres.first_name;
             if (usi.last_name !== hres.last_name) updates.last_name = hres.last_name;
+            if (!usi.permissions.mobile || !usi.permissions.time_tracking) {
+                updates.permissions = { mobile: true, time_tracking: true };
+            }
         } else if (usi.active) {
             updates.active = false;
         }

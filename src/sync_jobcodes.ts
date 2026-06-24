@@ -108,8 +108,7 @@ async function process_contract_update(cont: contract_route_doc, qbt: qbt_client
         }
     } else if (want) {
         jci = await qbt.create_jobcode({
-            name: jobcode_name(cont),
-            jobcode_type: "regular",
+            name: jobcode_name(cont)
         });
         const new_map_obj = create_qbt_object_map_item(jci.id, cont._id, "jobcode", new Date(jci.last_modified));
         await map_col.insertOne(new_map_obj);

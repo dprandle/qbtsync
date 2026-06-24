@@ -222,7 +222,9 @@ function process_timesheet_update(ts: qbt_timesheet, batch: inbound_batch): bool
     const uncharged = ts.jobcode_id === 0;
     const jobcode_map = uncharged ? undefined : batch.jc_maps.get(ts.jobcode_id);
     if (!uncharged && !jobcode_map && QBT_JOBCODE_IDS_NO_CONT.has(ts.jobcode_id)) {
-        wlog(`[ts] Skipping with cursor advance - got known jobcode id that doesn't match to contract -- jc: ${ts.jobcode_id}`);
+        wlog(
+            `[ts] Skipping with cursor advance - got known jobcode id that doesn't match to contract -- jc: ${ts.jobcode_id}`
+        );
         return true;
     }
 
@@ -499,12 +501,12 @@ async function process_time_record_update(
         const timesheet = await qbt.create_timesheet({
             user_id: user_map.qbt_id,
             jobcode_id: jobcode_map.qbt_id,
+            type: "regular",
             start: trec.start.toISOString(),
             end: on_the_clock ? "" : trec.end.toISOString(),
             date: trec.date.toISOString().slice(0, 10),
             notes: trec.notes,
             location: OUR_UPDATE_BY,
-            on_the_clock,
         });
         const map_obj = create_qbt_object_map_item(
             timesheet.id,

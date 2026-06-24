@@ -232,7 +232,7 @@ export class qbt_api_client implements qbt_client {
         last_name: string;
         mobile_number: string;
     }): Promise<qbt_user> {
-        const body = { data: [{ ...d, employee_role: "employee" }] };
+        const body = { data: [d] };
         const data = (await qbt_post("/users", body)) as qbt_users_response;
         return expect_ok(Object.values(data.results.users)[0], "user create", 0);
     }
@@ -259,7 +259,7 @@ export class qbt_api_client implements qbt_client {
         return expect_one(items, "jobcode", id);
     }
 
-    async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
+    async create_jobcode(d: { name: string }): Promise<qbt_jobcode> {
         const data = (await qbt_post("/jobcodes", { data: [d] })) as qbt_jobcodes_response;
         return expect_ok(Object.values(data.results.jobcodes)[0], "jobcode create", 0);
     }

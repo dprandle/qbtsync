@@ -57,7 +57,9 @@ function to_mock_filter(filter: qbt_query_filter): Record<string, unknown> {
         if (key === "ids") {
             const ids = Array.isArray(val)
                 ? val.map(Number)
-                : String(val).split(",").map((s) => Number(s.trim()));
+                : String(val)
+                      .split(",")
+                      .map((s) => Number(s.trim()));
             out["_id"] = { $in: ids };
         } else if (key === "id") {
             out["_id"] = Number(val);
@@ -104,12 +106,12 @@ export class qbt_mock_client implements qbt_client {
             id: next_mock_id(),
             user_id: d.user_id,
             jobcode_id: d.jobcode_id,
+            type: "regular",
             start: d.start,
             end: d.end,
             date: d.date,
             notes: d.notes,
             location: d.location,
-            on_the_clock: d.on_the_clock,
             last_modified: now_iso(),
         };
         await mongo.get_mock_timesheets().insertOne(to_mock_doc(ts));
@@ -128,7 +130,10 @@ export class qbt_mock_client implements qbt_client {
         if (ids.length === 0) return;
         // Mirror QBT: the timesheets are removed from the live collection and
         // copies recorded in timesheets-deleted.
-        const docs = await mongo.get_mock_timesheets().find({ _id: { $in: ids } }).toArray();
+        const docs = await mongo
+            .get_mock_timesheets()
+            .find({ _id: { $in: ids } })
+            .toArray();
         if (docs.length === 0) return;
         await mongo.get_mock_deleted_timesheets().insertMany(docs);
         await mongo.get_mock_timesheets().deleteMany({ _id: { $in: ids } });
@@ -157,7 +162,7 @@ export class qbt_mock_client implements qbt_client {
         if (opts.modified_since) filter["last_modified"] = { $gt: opts.modified_since.toISOString() };
         // If active is both, we just don't add a filter for mock
         if (opts.active === "yes") filter["active"] = true;
-        if (opts.active === "no")  filter["active"] = false;
+        if (opts.active === "no") filter["active"] = false;
         if (opts.ids?.length) filter["_id"] = { $in: opts.ids };
         const docs = await mongo
             .get_mock_users()
@@ -189,8 +194,11 @@ export class qbt_mock_client implements qbt_client {
             last_name: d.last_name,
             mobile_number: d.mobile_number,
             active: true,
-            employee_role: "employee",
             last_modified: now_iso(),
+            permissions: {
+                mobile: true,
+                time_tracking: true,
+            },
         };
         await mongo.get_mock_users().insertOne(to_mock_doc(user));
         return user;
@@ -228,7 +236,7 @@ export class qbt_mock_client implements qbt_client {
         return expect_one(items, "jobcode", id);
     }
 
-    async create_jobcode(d: { name: string; jobcode_type: string }): Promise<qbt_jobcode> {
+    async create_jobcode(d: { name: string }): Promise<qbt_jobcode> {
         const jc: qbt_jobcode = {
             id: next_mock_id(),
             name: d.name,

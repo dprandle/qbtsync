@@ -96,8 +96,11 @@ export type qbt_user = {
     last_name: string;
     mobile_number: string;
     active: boolean;
-    employee_role: string;
     last_modified: string; // ISO 8601
+    permissions: {
+        mobile: boolean;
+        time_tracking: boolean;
+    }
 };
 
 export type qbt_users_response = {
@@ -111,12 +114,12 @@ export type qbt_timesheet = {
     id: number;
     user_id: number;
     jobcode_id: number;
+    type: "regular" | "manual";
     notes: string;
     start: string; // ISO 8601
     end: string; // ISO 8601
     date: string; // YYYY-MM-DD
     location: string;
-    on_the_clock: boolean;
     last_modified: string; // ISO 8601    
 };
 
@@ -227,7 +230,7 @@ export interface qbt_client {
     // Jobcodes
     fetch_jobcodes(opts: fetch_jobcodes_opts): Promise<fetch_jobcodes_result>;
     fetch_jobcode(id: number): Promise<qbt_jobcode>;
-    create_jobcode(data: { name: string; jobcode_type: string }): Promise<qbt_jobcode>;
+    create_jobcode(data: { name: string; }): Promise<qbt_jobcode>;
     update_jobcode(id: number, data: Partial<qbt_jobcode>): Promise<qbt_jobcode>;
 
     // Jobcode Assignments
