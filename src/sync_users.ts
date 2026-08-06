@@ -9,6 +9,7 @@ import {
     prefetch_active_assignments_by_user,
 } from "./assignments";
 import { emp_hres_ids, should_have_active_qbt_jobcode } from "./sync_jobcodes";
+import { track_cursor_floor } from "./alerts";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
@@ -234,6 +235,7 @@ export async function update_users_from_hres(qbt: qbt_client): Promise<void> {
             elog(`[usi] Error syncing hres ${get_hres_log_str(hres)}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
+                progress.earliest_unresolved_detail = `${get_hres_log_str(hres)} (error: ${err})`;
             }
         }
     }
@@ -245,4 +247,5 @@ export async function update_users_from_hres(qbt: qbt_client): Promise<void> {
     } else {
         ilog("[usi] No hresource changes.");
     }
+    await track_cursor_floor("users", progress);
 }

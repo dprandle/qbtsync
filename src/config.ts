@@ -58,4 +58,16 @@ export const config = {
     // the cursor advance per batch so a crash resumes near where it stopped. Requires
     // a Mongo index on time_records {"last_update.on": 1} (the batches are sorted by it).
     outbound_ts_batch_size: optional_int("OUTBOUND_TS_BATCH_SIZE", 5000),
+    // Floored-cursor email alerts (SendGrid). A cursor "floored" on the same item for
+    // this many consecutive passes means the sync is wedged waiting on something that
+    // won't resolve by itself (unmapped user/jobcode, repeated per-item error) and is
+    // re-scanning its whole changed set every pass. Alerts are disabled unless both
+    // the API key and a recipient are set; the from-address must be a verified
+    // SendGrid sender. While the same item stays blocking, re-alerts are throttled to
+    // once per CURSOR_FLOOR_REALERT_HOURS.
+    sendgrid_api_key: process.env["SENDGRID_API_KEY"] ?? "",
+    alert_email_to: process.env["ALERT_EMAIL_TO"] ?? "",
+    alert_email_from: process.env["ALERT_EMAIL_FROM"] ?? "no-reply@zetrick.com",
+    cursor_floor_alert_passes: optional_int("CURSOR_FLOOR_ALERT_PASSES", 10),
+    cursor_floor_realert_hours: optional_int("CURSOR_FLOOR_REALERT_HOURS", 24),
 };

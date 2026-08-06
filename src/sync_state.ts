@@ -27,11 +27,23 @@ export type cleanup_state = {
     last_run: Date | null;
 };
 
+// Per-cursor floored-state tracking for alerting (see alerts.ts). Persisted so a
+// wedged loop that survives process restarts keeps its streak — a restart shouldn't
+// reset the clock on "this cursor has been stuck for hours".
+export type cursor_floor_state = {
+    floor: Date; // the earliest_unresolved value the cursor is pinned below
+    detail: string; // identity of the blocking item, for the alert body
+    floored_since: Date; // when this item first floored the cursor
+    consecutive: number; // consecutive passes floored on this same item
+    last_alerted: Date | null; // when we last emailed about it (throttling)
+};
+
 export type sync_state = {
     timesheets: timesheet_sync_state;
     users: user_sync_state;
     jobcodes: jobcode_sync_state;
     cleanup: cleanup_state;
+    floor_alerts: Record<string, cursor_floor_state>;
 };
 
 
@@ -51,7 +63,24 @@ const default_state: sync_state = {
     cleanup: {
         last_run: null,
     },
+    floor_alerts: {},
 };
+
+function parse_floor_alerts(raw: any): Record<string, cursor_floor_state> {
+    const out: Record<string, cursor_floor_state> = {};
+    for (const [name, v] of Object.entries(raw ?? {})) {
+        const s = v as any;
+        if (!s?.floor || !s?.floored_since) continue;
+        out[name] = {
+            floor: new Date(s.floor),
+            detail: s.detail ?? "",
+            floored_since: new Date(s.floored_since),
+            consecutive: s.consecutive ?? 0,
+            last_alerted: s.last_alerted ? new Date(s.last_alerted) : null,
+        };
+    }
+    return out;
+}
 
 function parse_dates(state: any): sync_state {
     return {
@@ -72,6 +101,7 @@ function parse_dates(state: any): sync_state {
         cleanup: {
             last_run: state.cleanup?.last_run ? new Date(state.cleanup.last_run) : null,
         },
+        floor_alerts: parse_floor_alerts(state.floor_alerts),
     };
 }
 
@@ -134,6 +164,14 @@ export function save_cleanup_state(update: Partial<cleanup_state>): void {
     write_state(state);
 }
 
+// Upsert (or clear, with null) the floored-state entry for one cursor.
+export function save_floor_alert_state(name: string, st: cursor_floor_state | null): void {
+    const state = get_sync_state();
+    if (st) state.floor_alerts[name] = st;
+    else delete state.floor_alerts[name];
+    write_state(state);
+}
+
 // True when the heavy map cleanup should start now: we're inside the configured
 // low-traffic window (server-local day + hour range) and it hasn't already run since
 // this window opened. Gating on "ran since the window opened" rather than a fixed
@@ -168,6 +206,9 @@ export const CURSOR_EPOCH = new Date(0); // default "sync from the beginning" cu
 export type cursor_progress = {
     latest_resolved: Date;
     earliest_unresolved: Date | null;
+    // Log-string identity of the item that set earliest_unresolved, so a floored
+    // cursor can name its blocker in alerts. Purely informational.
+    earliest_unresolved_detail?: string;
 };
 
 export function safe_cursor(progress: cursor_progress, since: Date): Date {

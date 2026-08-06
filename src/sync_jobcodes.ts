@@ -2,6 +2,7 @@ import mongo from "./db";
 import { save_jobcode_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, primary_by_our_id } from "./qbt_object_map";
 import { qbt_client, qbt_jobcode, fetch_all_by_ids } from "./qbt_client_interface";
+import { track_cursor_floor } from "./alerts";
 import {
     change_info,
     find_value_change_item,
@@ -165,6 +166,7 @@ export async function update_jobcodes_from_contracts(qbt: qbt_client): Promise<v
             elog(`[jc] Error syncing contract ${get_contract_log_str(cont)}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
+                progress.earliest_unresolved_detail = `${get_contract_log_str(cont)} (error: ${err})`;
             }
         }
     }
@@ -176,4 +178,5 @@ export async function update_jobcodes_from_contracts(qbt: qbt_client): Promise<v
     } else {
         ilog("[jc] No contract changes.");
     }
+    await track_cursor_floor("jobcodes", progress);
 }

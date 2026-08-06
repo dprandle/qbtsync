@@ -15,6 +15,7 @@ import { change_info } from "./uobj_common";
 import { contract_route_doc, should_have_active_qbt_jobcode } from "./sync_jobcodes";
 import { hresource_doc, should_have_qbt_user } from "./sync_users";
 import { config } from "./config";
+import { track_cursor_floor } from "./alerts";
 const TIME_RECORD_SCHEMA_VERSION = 1;
 
 export type time_record = {
@@ -96,6 +97,57 @@ function day_start(start: Date, tz_bytes: number[]): Date {
     const month = find_type("month", fmt_parts);
     const day = find_type("day", fmt_parts);
     return new Date(`${year}-${month}-${day}T00:00:00Z`);
+}
+
+// QBT applies its "split at midnight" rule to the calendar day of the timestamps
+// as submitted, not to the worker's local day: pushing UTC ("+00:00") times made
+// any Alaska shift spanning 4:00pm local cross UTC midnight, and QBT split off the
+// post-midnight portion as a brand-new timesheet, which we then ingested back as an
+// overlapping duplicate (UD-829/UD-854). All timesheet writes therefore carry the
+// contract's local offset. Computed per date via Intl so DST is handled.
+function local_offset_iso(d: Date, tz_bytes: number[]): string {
+    const tz_id = tz_str(tz_bytes);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+        timeZone: tz_id,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+    });
+    const p: Record<string, string> = {};
+    for (const part of fmt.formatToParts(d)) p[part.type] = part.value;
+    // Offset = local wall-clock reinterpreted as UTC minus the actual instant.
+    // Rounding absorbs sub-minute millis (QBT stores whole seconds anyway).
+    const as_utc = Date.UTC(+p.year, +p.month - 1, +p.day, +p.hour, +p.minute, +p.second);
+    const off_min = Math.round((as_utc - d.getTime()) / 60_000);
+    const abs = Math.abs(off_min);
+    const hh = String(Math.floor(abs / 60)).padStart(2, "0");
+    const mm = String(abs % 60).padStart(2, "0");
+    return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}:${p.second}${off_min < 0 ? "-" : "+"}${hh}:${mm}`;
+}
+
+// QBT can silently rewrite a timesheet as it stores it (the split-at-midnight
+// truncation above went unnoticed for weeks because create/update still returned
+// success). Compare what QBT stored against what we sent so any rewrite is loud
+// and immediate. Only fields we actually sent are compared; an undefined field
+// wasn't part of the write.
+function warn_on_qbt_time_rewrite(label: string, sent: { start?: string; end?: string }, got: qbt_timesheet): void {
+    const bad: string[] = [];
+    if (sent.start !== undefined && !dates_equal(sent.start, got.start)) {
+        bad.push(`start sent ${sent.start} stored ${got.start}`);
+    }
+    if (sent.end !== undefined && !dates_equal(sent.end, got.end)) {
+        bad.push(`end sent ${sent.end} stored ${got.end || "on-the-clock"}`);
+    }
+    if (bad.length > 0) {
+        elog(
+            `[ts] QBT rewrote times on ${label} of timesheet ${got.id}: ${bad.join("; ")} — ` +
+                `QBT-side state now diverges from the time_record (possible split-at-midnight or other server-side edit)`
+        );
+    }
 }
 
 // `cont` is null for uncharged time (QBT jobcode_id 0): the worker logged time
@@ -300,7 +352,7 @@ async function process_inbound_page(
     progress: cursor_progress,
     qbt: qbt_client
 ): Promise<cursor_progress> {
-    let { latest_resolved, earliest_unresolved } = progress;
+    let { latest_resolved, earliest_unresolved, earliest_unresolved_detail } = progress;
     const batch = await load_inbound_batch(timesheets);
 
     for (let i = 0; i < timesheets.length; ++i) {
@@ -324,11 +376,12 @@ async function process_inbound_page(
             if (mod > latest_resolved) latest_resolved = mod;
         } else if (!earliest_unresolved || mod < earliest_unresolved) {
             earliest_unresolved = mod;
+            earliest_unresolved_detail = get_timesheet_log_str(ts);
         }
     }
 
     await flush_inbound_batch(batch, qbt);
-    return { latest_resolved, earliest_unresolved };
+    return { latest_resolved, earliest_unresolved, earliest_unresolved_detail };
 }
 
 // Inbound sync of QBT timesheets into our time_records. Every fetch is bounded by
@@ -377,6 +430,7 @@ export async function update_time_recs_from_timesheets(qbt: qbt_client): Promise
     } else {
         ilog("[ts] No inbound cursor advance.");
     }
+    await track_cursor_floor("timesheets-inbound", progress);
 }
 
 // Per-run read cache for the outbound timesheet sync. The whole changed set's
@@ -497,17 +551,30 @@ async function process_time_record_update(
         return !should_have_jc;
     }
 
+    // Contract-local offset for all outgoing times (see local_offset_iso). The cont
+    // doc should always exist when a jobcode mapping does; if it somehow doesn't,
+    // fall back to UTC rather than dropping the write, but say so — UTC times are
+    // what re-arms the split-at-midnight bug.
+    if (!cont) {
+        wlog(`[ts] Contract ${trec.cont_id} doc missing - falling back to UTC offset for QBT write times`);
+    }
+    const write_time = (d: Date) => (cont ? local_offset_iso(d, cont.timezone) : d.toISOString());
+
     const do_create = async () => {
+        const sent = {
+            start: write_time(trec.start),
+            end: on_the_clock ? "" : write_time(trec.end),
+        };
         const timesheet = await qbt.create_timesheet({
             user_id: user_map.qbt_id,
             jobcode_id: jobcode_map.qbt_id,
             type: "regular",
-            start: trec.start.toISOString(),
-            end: on_the_clock ? "" : trec.end.toISOString(),
+            ...sent,
             date: trec.date.toISOString().slice(0, 10),
             notes: trec.notes,
             location: OUR_UPDATE_BY,
         });
+        warn_on_qbt_time_rewrite("create", sent, timesheet);
         const map_obj = create_qbt_object_map_item(
             timesheet.id,
             trec._id,
@@ -542,14 +609,15 @@ async function process_time_record_update(
             const updates: Partial<qbt_timesheet> = {};
             // QBT rejects edits to the start of an on-the-clock (running) timesheet, so
             // only push a start change once the timesheet has been clocked out.
-            if (!on_the_clock && !dates_equal(trec.start, ts.start)) updates.start = trec.start.toISOString();
-            if (!dates_equal(trec.end, ts.end)) updates.end = !on_the_clock ? trec.end.toISOString() : "";
+            if (!on_the_clock && !dates_equal(trec.start, ts.start)) updates.start = write_time(trec.start);
+            if (!dates_equal(trec.end, ts.end)) updates.end = !on_the_clock ? write_time(trec.end) : "";
             if (!dates_equal(trec.date, ts.date)) updates.date = short_date_str(trec.date);
             if (trec.notes !== ts.notes) updates.notes = trec.notes;
             if (jobcode_map.qbt_id !== ts.jobcode_id) updates.jobcode_id = jobcode_map.qbt_id;
 
             if (Object.keys(updates).length > 0) {
                 const updated = await qbt.update_timesheet(ts.id, updates);
+                warn_on_qbt_time_rewrite("update", updates, updated);
                 ilog(`[ts] Updated ${get_timesheet_log_str(updated)} with:`, updates);
 
                 // Here we gotta update our mapping last mod as well so that our ingest knows when a timesheet edit is from us
@@ -601,11 +669,13 @@ async function process_outbound_batch(
                 if (at > progress.latest_resolved) progress.latest_resolved = at;
             } else if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
+                progress.earliest_unresolved_detail = get_time_record_log_str(trec);
             }
         } catch (err) {
             elog(`[ts] Outbound error for time_record ${trec._id}:`, err);
             if (!progress.earliest_unresolved || at < progress.earliest_unresolved) {
                 progress.earliest_unresolved = at;
+                progress.earliest_unresolved_detail = `${get_time_record_log_str(trec)} (error: ${err})`;
             }
         }
     }
@@ -667,4 +737,5 @@ export async function update_timesheets_from_time_recs(qbt: qbt_client): Promise
     }
 
     if (processed === 0) ilog("[ts] No outbound changes.");
+    await track_cursor_floor("timesheets-outbound", progress);
 }
