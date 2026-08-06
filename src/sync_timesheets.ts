@@ -611,6 +611,18 @@ async function process_time_record_update(
             // only push a start change once the timesheet has been clocked out.
             if (!on_the_clock && !dates_equal(trec.start, ts.start)) updates.start = write_time(trec.start);
             if (!dates_equal(trec.end, ts.end)) updates.end = !on_the_clock ? write_time(trec.end) : "";
+            // When either time changes, push BOTH re-encoded in the contract's offset.
+            // The diffs above compare instants, so a field that only differs in offset
+            // representation (e.g. a start submitted from a traveling worker's phone)
+            // never re-sends on its own, leaving the sheet mixed-offset after a
+            // one-sided edit. QBT reads meaning into submitted offsets (see
+            // local_offset_iso), so any sheet we touch should carry one consistent
+            // calendar. Time-field edits only — notes/jobcode-only changes don't
+            // rewrite times.
+            if (!on_the_clock && (updates.start !== undefined || updates.end !== undefined)) {
+                updates.start = write_time(trec.start);
+                updates.end = write_time(trec.end);
+            }
             if (!dates_equal(trec.date, ts.date)) updates.date = short_date_str(trec.date);
             if (trec.notes !== ts.notes) updates.notes = trec.notes;
             if (jobcode_map.qbt_id !== ts.jobcode_id) updates.jobcode_id = jobcode_map.qbt_id;
