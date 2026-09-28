@@ -515,6 +515,15 @@ async function process_time_record_update(
         return true;
     }
 
+    // Archived and never pushed: there is no QBT timesheet to delete and nothing to
+    // create, so the record is done regardless of its user/jobcode mappings. Without
+    // this it fell through to the "wait for the user mapping" branch below, and an
+    // archived record whose hres has no mapping floored the outbound cursor forever.
+    if (!mapping && !want) {
+        ilog(`[ts] No changes - archived trec has no qbt timesheet`);
+        return true;
+    }
+
     // No mapping: time_record was created directly in UberMail.
     // An incomplete record can never be created in QBT; treat it as done so the
     // cursor isn't stalled — it will reappear if hrid/cont_id are filled in later.

@@ -143,6 +143,8 @@ npm run seed_mock_db -- --usi --jc    # seed only the listed types
 
 Each type drops and repopulates its own collection independently, so you can refresh a single entity without touching the others.
 
+=npm run update_mock_db= (same flags) is the incremental complement: it pulls only what QBT reports modified since each collection's floor and upserts it (timesheets also apply QBT's deleted feed). The floor is the newest =last_modified= QBT returned on the previous run, recorded per collection in the mock DB's =_update_meta= collection — not the newest =last_modified= in the collection itself, because the dev service also writes the mock collections (mock-created rows and mock edits of real rows are stamped with the wall clock) and those writes must not move the floor past real QBT changes that were never pulled. With no recorded floor (the first run under this scheme) it does a one-time full fetch and records the floor from that; =seed_mock_db= records the floor from the snapshot it inserts, so an update after a seed is incremental.
+
 ** Logging
 
 All log output (=ilog=/=dlog=/=wlog=/=elog=) is written to the terminal and teed to a per-day file under =dist/logs/= named =<date>_<service>.log= (=service= is =sync= for the main process, otherwise the entry script's basename, e.g. =seed_mock_db=). The directory follows the compiled binary, so run via =node dist/...= rather than ts-node. Under systemd the terminal stream also lands in the journal (=journalctl -u qbtsync -f=).

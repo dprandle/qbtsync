@@ -1,7 +1,7 @@
 import mongo from "./db";
 import { save_user_state, get_sync_state, cursor_progress, safe_cursor, CURSOR_EPOCH } from "./sync_state";
 import { create_qbt_object_map_item, primary_by_our_id } from "./qbt_object_map";
-import { change_info, is_active, make_ci_now, uid } from "./uobj_common";
+import { change_info, is_active, make_ci_now, uid, INVALID_DATETIME } from "./uobj_common";
 import { qbt_client, qbt_user, fetch_all_by_ids } from "./qbt_client_interface";
 import {
     EMP_ACTIVE_ROLE_KEYS,
@@ -10,6 +10,7 @@ import {
 } from "./assignments";
 import { emp_hres_ids, should_have_active_qbt_jobcode } from "./sync_jobcodes";
 import { track_cursor_floor } from "./alerts";
+import { config } from "./config";
 
 // Bit 0 of tt_flags — mirrors TIME_TRACKING_APP in hres.h
 const TIME_TRACKING_APP = 1;
@@ -208,6 +209,41 @@ export async function update_users_from_hres(qbt: qbt_client): Promise<void> {
     // process_hres_update resolves for an existing mapping; new hres aren't mapped
     // yet, so they fall through to a create and an empty assignment reconcile.
     const map_col = mongo.get_qbt_map_objects();
+
+    // Orphan sweep: an active, time-tracking hres with no user mapping only ever gets
+    // one created here, but the delta scan above never revisits an hres whose
+    // last_update predates the cursor. If its mapping row goes away after the fact
+    // (the cleanup sweep drops it because the QBT user is gone, a DB restore), the
+    // outbound timesheet pass then waits on it forever and floors its cursor. Sweep
+    // for those every pass. In dev they're reconciled alongside the changed set (a
+    // create against the mock is harmless, and dev loses mappings routinely to Live
+    // pulls and mock gaps); their last_update is older than the cursor, so they never
+    // move it. In prod we only warn: auto-creating a real QBT user for a mapping that
+    // vanished could duplicate a person who still has one, so a human decides. The
+    // outbound cursor floor alert already flags the wedge.
+    const tracking = await mongo
+        .get_hresources()
+        .find({ tt_flags: { $bitsAllSet: TIME_TRACKING_APP }, "archived_info.on": { $lte: INVALID_DATETIME } })
+        .toArray();
+    const tracking_maps = await map_col
+        .find({ type: "user", our_id: { $in: tracking.map((h) => h._id) } }, { projection: { our_id: 1 } })
+        .toArray();
+    const mapped = new Set(tracking_maps.map((m) => m.our_id));
+    const changed_ids = new Set(changed.map((h) => h._id));
+    const unmapped = tracking.filter((h) => !mapped.has(h._id) && !changed_ids.has(h._id));
+    if (unmapped.length > 0) {
+        const who = unmapped.map(get_hres_log_str).join(", ");
+        if (config.qbt_env === "dev") {
+            wlog(`[usi] ${unmapped.length} time-tracking hresource(s) have no QBT user mapping - reconciling: ${who}`);
+            changed.push(...unmapped);
+        } else {
+            wlog(
+                `[usi] ${unmapped.length} time-tracking hresource(s) have no QBT user mapping and won't be revisited by the delta scan - ` +
+                    `outbound timesheets for them will wait; fix the mapping or touch the hresource to trigger a create: ${who}`
+            );
+        }
+    }
+
     const hres_ids = changed.map((h) => h._id);
     const user_maps = await map_col.find({ type: "user", our_id: { $in: hres_ids } }).toArray();
     const primary_user_ids = [...primary_by_our_id(user_maps).values()].map((m) => m.qbt_id);

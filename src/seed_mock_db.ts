@@ -1,7 +1,8 @@
-import "./global_setup"
+import "./global_setup";
 import mongo from "./db";
 import { qbt_api_client } from "./qbt_client";
 import { to_mock_doc } from "./qbt_mock_client";
+import { set_update_floor } from "./mock_update_meta";
 
 async function fetch_all<T>(
     label: string,
@@ -35,19 +36,21 @@ async function seed_users(api: qbt_api_client) {
     ilog("[seed:usi] Seeding users...");
     await clear_col("usi", () => mongo.get_mock_users().drop());
     ilog("[seed:usi] Fetching users...");
-    const users = await fetch_all("usi", (p) => api.fetch_users({ page: p, active: "both"}));
+    const users = await fetch_all("usi", (p) => api.fetch_users({ page: p, active: "both" }));
     ilog(`[seed:usi] Inserting ${users.length} users into mock collection...`);
     if (users.length > 0) await mongo.get_mock_users().insertMany(users.map(to_mock_doc));
+    await set_update_floor("users", users);
     ilog(`[seed:usi] Done. ${users.length} document(s) inserted.`);
 }
 
 async function seed_jobcodes(api: qbt_api_client) {
     ilog("[seed:jc] Seeding jobcodes...");
-    await clear_col("jc", () => mongo.get_mock_jobcodes().drop()),
+    await clear_col("jc", () => mongo.get_mock_jobcodes().drop());
     ilog("[seed:jc] Fetching jobcodes...");
     const jobcodes = await fetch_all("jc", (p) => api.fetch_jobcodes({ page: p, active: "both" }));
     ilog(`[seed:jc] Inserting ${jobcodes.length} jobcodes into mock collection...`);
     if (jobcodes.length > 0) await mongo.get_mock_jobcodes().insertMany(jobcodes.map(to_mock_doc));
+    await set_update_floor("jobcodes", jobcodes);
     ilog(`[seed:jc] Done. ${jobcodes.length} document(s) inserted.`);
 }
 
@@ -57,7 +60,9 @@ async function seed_jobcode_assignments(api: qbt_api_client) {
     ilog("[seed:jca] Fetching jobcode_assignments...");
     const jobcode_assignments = await fetch_all("jca", (p) => api.fetch_jobcode_assignments({ page: p }));
     ilog(`[seed:jca] Inserting ${jobcode_assignments.length} jobcode_assignments into mock collection...`);
-    if (jobcode_assignments.length > 0) await mongo.get_mock_assignments().insertMany(jobcode_assignments.map(to_mock_doc));    
+    if (jobcode_assignments.length > 0)
+        await mongo.get_mock_assignments().insertMany(jobcode_assignments.map(to_mock_doc));
+    await set_update_floor("jobcode_assignments", jobcode_assignments);
     ilog(`[seed:jca] Done. ${jobcode_assignments.length} document(s) inserted.`);
 }
 
@@ -67,10 +72,10 @@ async function seed_timesheets(api: qbt_api_client) {
     ilog("[seed:ts] Fetching timesheets...");
     const timesheets = await fetch_all("ts", (p) => api.fetch_timesheets({ page: p }));
     ilog(`[seed:ts] Inserting ${timesheets.length} timesheets into mock collection...`);
-    if (timesheets.length > 0) await mongo.get_mock_timesheets().insertMany(timesheets.map(to_mock_doc));    
+    if (timesheets.length > 0) await mongo.get_mock_timesheets().insertMany(timesheets.map(to_mock_doc));
+    await set_update_floor("timesheets", timesheets);
     ilog(`[seed:ts] Done. ${timesheets.length} document(s) inserted.`);
 }
-
 
 // Invitations aren't QBT data — they're written by our invite server as invites
 // go out. There's nothing to copy from the live API; we just clear the

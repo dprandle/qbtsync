@@ -3,20 +3,18 @@ import { Collection, AnyBulkWriteOperation } from "mongodb";
 import mongo from "./db";
 import { qbt_api_client } from "./qbt_client";
 import { to_mock_doc } from "./qbt_mock_client";
+import { get_update_floor, advance_update_floor, type mock_update_key } from "./mock_update_meta";
 
-// Most-recent last_modified instant stored in a mock collection. last_modified is an
-// ISO-8601 string, but stored values carry different zone offsets (mock writes use the
-// "Z" form, QBT live emits numeric offsets), so a lexical max would be wrong — parse
-// each to a real instant with $dateFromString and take the $max. Returns null for an
-// empty collection (nothing has been synced yet), in which case there is no floor to
-// query updates against and the caller falls back to a full fetch.
-async function greatest_last_modified(col: Collection<any>): Promise<Date | null> {
-    const [res] = await col
-        .aggregate<{ max: Date | null }>([
-            { $group: { _id: null, max: { $max: { $dateFromString: { dateString: "$last_modified" } } } } },
-        ])
-        .toArray();
-    return res?.max ?? null;
+// The recorded floor from the last update (or seed) run. None recorded means this
+// collection has never been pulled under the floor scheme, and the rows it holds may
+// have gaps from the old "newest row in the collection" floor (which the dev service's
+// own mock writes could push past unpulled QBT changes), so the only sound floor is
+// none at all: a one-time full fetch, after which the floor is recorded.
+async function update_floor(key: mock_update_key): Promise<Date | null> {
+    const recorded = await get_update_floor(key);
+    if (!recorded)
+        ilog(`[update:${key}] No recorded floor - doing a full fetch (one-time; the floor is recorded after)`);
+    return recorded;
 }
 
 async function fetch_all<T>(
@@ -52,43 +50,46 @@ function since_str(since: Date | null): string {
 
 async function update_users(api: qbt_api_client) {
     const col = mongo.get_mock_users();
-    const since = await greatest_last_modified(col);
+    const since = await update_floor("users");
     ilog(`[update:usi] Fetching users modified since ${since_str(since)}...`);
     const users = await fetch_all("usi", (p) =>
         api.fetch_users({ page: p, active: "both", modified_since: since ?? undefined })
     );
     ilog(`[update:usi] Upserting ${users.length} users...`);
     await upsert_by_id(col, users.map(to_mock_doc));
+    await advance_update_floor("users", users);
     ilog(`[update:usi] Done. ${users.length} document(s) upserted.`);
 }
 
 async function update_jobcodes(api: qbt_api_client) {
     const col = mongo.get_mock_jobcodes();
-    const since = await greatest_last_modified(col);
+    const since = await update_floor("jobcodes");
     ilog(`[update:jc] Fetching jobcodes modified since ${since_str(since)}...`);
     const jobcodes = await fetch_all("jc", (p) =>
         api.fetch_jobcodes({ page: p, active: "both", modified_since: since ?? undefined })
     );
     ilog(`[update:jc] Upserting ${jobcodes.length} jobcodes...`);
     await upsert_by_id(col, jobcodes.map(to_mock_doc));
+    await advance_update_floor("jobcodes", jobcodes);
     ilog(`[update:jc] Done. ${jobcodes.length} document(s) upserted.`);
 }
 
 async function update_jobcode_assignments(api: qbt_api_client) {
     const col = mongo.get_mock_assignments();
-    const since = await greatest_last_modified(col);
+    const since = await update_floor("jobcode_assignments");
     ilog(`[update:jca] Fetching jobcode_assignments modified since ${since_str(since)}...`);
     const assignments = await fetch_all("jca", (p) =>
         api.fetch_jobcode_assignments({ page: p, modified_since: since ?? undefined })
     );
     ilog(`[update:jca] Upserting ${assignments.length} jobcode_assignments...`);
     await upsert_by_id(col, assignments.map(to_mock_doc));
+    await advance_update_floor("jobcode_assignments", assignments);
     ilog(`[update:jca] Done. ${assignments.length} document(s) upserted.`);
 }
 
 async function update_timesheets(api: qbt_api_client) {
     const col = mongo.get_mock_timesheets();
-    const since = await greatest_last_modified(col);
+    const since = await update_floor("timesheets");
 
     ilog(`[update:ts] Fetching timesheets modified since ${since_str(since)}...`);
     const timesheets = await fetch_all("ts", (p) =>
@@ -96,6 +97,7 @@ async function update_timesheets(api: qbt_api_client) {
     );
     ilog(`[update:ts] Upserting ${timesheets.length} timesheets...`);
     await upsert_by_id(col, timesheets.map(to_mock_doc));
+    await advance_update_floor("timesheets", timesheets);
     ilog(`[update:ts] Done. ${timesheets.length} document(s) upserted.`);
 
     // QBT's timesheets_deleted feed requires a modified_since, and an empty collection
@@ -116,10 +118,11 @@ async function update_timesheets(api: qbt_api_client) {
     ilog(`[update:ts] Removed ${res.deletedCount} deleted timesheet(s) (of ${deleted_ids.length} reported).`);
 }
 
-// Each updater, keyed by the CLI flag that selects it. Every entry computes the most
-// recent last_modified already in its mock collection and pulls QBT updates since then,
-// upserting the results. Invitations are intentionally absent — they're app-generated,
-// not QBT data, so there's nothing to pull.
+// Each updater, keyed by the CLI flag that selects it. Every entry pulls QBT updates
+// since its recorded floor (the newest last_modified QBT returned on the previous run,
+// see mock_update_meta.ts), upserts the results, and advances the floor. Invitations
+// are intentionally absent — they're app-generated, not QBT data, so there's nothing
+// to pull.
 const UPDATERS: Record<string, { label: string; run: (api: qbt_api_client) => Promise<void> }> = {
     "--usi": { label: "users", run: update_users },
     "--jc": { label: "jobcodes", run: update_jobcodes },
@@ -157,9 +160,9 @@ function selected_updaters(argv: string[]): Array<(api: qbt_api_client) => Promi
     return runs;
 }
 
-// Pulls incremental QBT updates into the selected mock collections, keyed off the most
-// recent last_modified each collection already holds. Standalone operation — independent
-// of the sync loops, and a complement to seed_mock_db (which wipes and full-copies).
+// Pulls incremental QBT updates into the selected mock collections, keyed off each
+// collection's recorded floor. Standalone operation — independent of the sync loops,
+// and a complement to seed_mock_db (which wipes and full-copies).
 export async function update_mock_db(runs: Array<(api: qbt_api_client) => Promise<void>>): Promise<void> {
     ilog("[update] Updating mock QBT from live API...");
     const api = new qbt_api_client();

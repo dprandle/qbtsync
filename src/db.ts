@@ -5,6 +5,7 @@ import { type qbt_object_map } from "./qbt_object_map";
 import { type hresource_doc } from "./sync_users";
 import { type contract_route_doc } from "./sync_jobcodes";
 import { type invitation_doc } from "./invite_server";
+import { type mock_update_meta } from "./mock_update_meta";
 import {
     mock_qbt_user,
     mock_qbt_jobcode,
@@ -87,6 +88,11 @@ function get_mock_deleted_timesheets(): Collection<mock_qbt_timesheet> {
     return mock_db.collection<mock_qbt_timesheet>("timesheets-deleted");
 }
 
+// Per-collection "modified since" floors for update_mock_db (see mock_update_meta.ts).
+function get_mock_update_meta(): Collection<mock_update_meta> {
+    return mock_db.collection<mock_update_meta>("_update_meta");
+}
+
 const mongo = {
     connect,
     disconnect,
@@ -103,6 +109,7 @@ const mongo = {
     get_mock_assignments,
     get_mock_timesheets,
     get_mock_deleted_timesheets,
+    get_mock_update_meta,
 };
 
 export default mongo;
